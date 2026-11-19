@@ -463,6 +463,138 @@ static int test_fs_moffs_rejected(void) {
     return 0;
 }
 
+/* --- 7. Memory & resource leak audit verification (1000 dlopen/dlsym cycles + 64 thread TLS/stack cycles) --- */
+static long read_proc_self_vm_pages(void) {
+    FILE *fp = fopen("/proc/self/statm", "r");
+    if (!fp) return -1;
+    long total_pages = -1;
+    if (fscanf(fp, "%ld", &total_pages) != 1) {
+        total_pages = -1;
+    }
+    fclose(fp);
+    return total_pages;
+}
+
+static void *leak_thread_worker(void *arg) {
+    uint32_t code_va = (uint32_t)(uintptr_t)arg;
+    /* Passing cpu=NULL forces dbt_ensure_thread_tls_and_stack to allocate 16 KiB TLS + 2 MiB stack */
+    int res = newminhh_dbt_enter_at(code_va, NULL);
+    return (res == 77) ? (void *)1 : NULL;
+}
+
+static int test_leak_audit_cycles(void) {
+    char plugin_so[512];
+    snprintf(plugin_so, sizeof(plugin_so), "%s/libplugin_stripped.so", g_i386_dir);
+
+    /* A. 1000 cycles of newminhh_dbt_dlopen + dlsym + invoke + dlclose (> 512 CB cap & > 256 cache cap) */
+    typedef int (*fn2_t)(int, int);
+    for (int i = 0; i < 1000; i++) {
+        void *h = newminhh_dbt_dlopen(plugin_so, 0);
+        if (!h) {
+            fprintf(stderr, "leak_audit: newminhh_dbt_dlopen failed at iter %d: %s\n",
+                    i, newminhh_dbt_dlerror());
+            return 1;
+        }
+        fn2_t pfn = (fn2_t)newminhh_dbt_dlsym(h, "plugin_compute");
+        if (!pfn || pfn(7, 5) != 47) {
+            fprintf(stderr, "leak_audit: newminhh_dbt_dlsym/invoke failed at iter %d\n", i);
+            newminhh_dbt_dlclose(h);
+            return 1;
+        }
+        if (newminhh_dbt_dlclose(h) != 0) {
+            fprintf(stderr, "leak_audit: newminhh_dbt_dlclose failed at iter %d\n", i);
+            return 1;
+        }
+    }
+
+    /* B. 1000 cycles of compat_dlopen("libc.so.6") + compat_dlsym_cdecl("strlen") + compat_dlclose (> 256 OUT cap) */
+    void *first_tramp = NULL;
+    for (int i = 0; i < 1000; i++) {
+        void *ch = compat_dlopen("libc.so.6", 0);
+        if (!ch) {
+            fprintf(stderr, "leak_audit: compat_dlopen(libc.so.6) failed at iter %d\n", i);
+            return 1;
+        }
+        void *tr = compat_dlsym_cdecl(ch, "strlen");
+        if (!tr) {
+            fprintf(stderr, "leak_audit: compat_dlsym_cdecl(strlen) failed at iter %d\n", i);
+            compat_dlclose(ch);
+            return 1;
+        }
+        if (i == 0) {
+            first_tramp = tr;
+        } else if (tr != first_tramp) {
+            fprintf(stderr, "leak_audit: outgoing trampoline not deduplicated at iter %d (%p != %p)\n",
+                    i, tr, first_tramp);
+            compat_dlclose(ch);
+            return 1;
+        }
+        if (compat_dlclose(ch) != 0) {
+            fprintf(stderr, "leak_audit: compat_dlclose failed at iter %d\n", i);
+            return 1;
+        }
+    }
+
+    /* C. 64 worker thread create/join cycles verifying 16 KiB TLS + 2 MiB guest stack munmap on exit */
+    uint8_t *page = (uint8_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        perror("mmap");
+        return 1;
+    }
+    /* mov eax, gs:[0]; test eax, eax; mov eax, 77; ret */
+    const uint8_t code[] = {0x65, 0xA1, 0x00, 0x00, 0x00, 0x00, 0xB8, 0x4D, 0x00, 0x00, 0x00, 0xC3};
+    memcpy(page, code, sizeof(code));
+    if (mprotect(page, 4096, PROT_READ) != 0) {
+        munmap(page, 4096);
+        return 1;
+    }
+
+    /* Warm up 1 thread first so glibc pthread stack cache settles */
+    pthread_t warm;
+    if (pthread_create(&warm, NULL, leak_thread_worker, page) != 0) {
+        munmap(page, 4096);
+        return 1;
+    }
+    void *wret = NULL;
+    pthread_join(warm, &wret);
+    if (wret != (void *)1) {
+        munmap(page, 4096);
+        return 1;
+    }
+
+    long pages_before = read_proc_self_vm_pages();
+    for (int i = 0; i < 64; i++) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, leak_thread_worker, page) != 0) {
+            munmap(page, 4096);
+            return 1;
+        }
+        void *tret = NULL;
+        pthread_join(th, &tret);
+        if (tret != (void *)1) {
+            fprintf(stderr, "leak_audit: worker thread failed at iter %d\n", i);
+            munmap(page, 4096);
+            return 1;
+        }
+    }
+    long pages_after = read_proc_self_vm_pages();
+    munmap(page, 4096);
+
+    /* Without TLS cleanup, 64 threads would leak 64 * 4 = 256 pages (1 MiB);
+     * without stack cleanup, 64 threads would leak 64 * 512 = 32768 pages (128 MiB).
+     * Allow at most 64 pages of slack for allocator metadata. */
+    if (pages_before > 0 && pages_after > 0 && (pages_after - pages_before) > 64) {
+        fprintf(stderr, "leak_audit: VmSize grew by %ld pages (%ld -> %ld) across 64 threads\n",
+                pages_after - pages_before, pages_before, pages_after);
+        return 1;
+    }
+
+    printf("PASS test_leak_audit_cycles (1000 dbt_dl cycles, 1000 compat_dl cycles, 64 threads delta=%ld pages)\n",
+           (pages_before > 0 && pages_after > 0) ? (pages_after - pages_before) : 0L);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1) {
         g_i386_dir = argv[1];
@@ -473,6 +605,7 @@ int main(int argc, char **argv) {
     if (test_concurrent_brk_dl_sigsegv() != 0) return 1;
     if (test_exec_embedded_eexist_diag() != 0) return 1;
     if (test_fs_moffs_rejected() != 0) return 1;
+    if (test_leak_audit_cycles() != 0) return 1;
     printf("ALL_PART4_MT_STRESS_TESTS_PASSED\n");
     return 0;
 }
