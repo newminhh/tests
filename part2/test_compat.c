@@ -7,6 +7,8 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbit.h>
+#include <stdckdint.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -469,7 +471,7 @@ static void test_syscalls(void) {
     /* 3. mmap2 (pgoffset << 12) + munmap */
     char tmp_path[128];
     snprintf(tmp_path, sizeof(tmp_path), "/tmp/newminhh_p2_mmap_%d.bin", (int)getpid());
-    int fd = open(tmp_path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+    int fd = open(tmp_path, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
     assert(fd >= 0);
     uint8_t page0[4096], page1[4096];
     memset(page0, 0x11, sizeof(page0));
@@ -552,7 +554,7 @@ static void test_struct_repacking(void) {
     memset(&src, 0, sizeof(src));
     src.st_dev = 0x1234;
     src.st_ino = 0x87654321ULL;
-    src.st_mode = S_IFREG | 0644;
+    src.st_mode = S_IFREG | (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     src.st_nlink = 7;
     src.st_uid = 1000;
     src.st_gid = 1000;
@@ -569,7 +571,7 @@ static void test_struct_repacking(void) {
 
     newminhh_stat32_t s32;
     assert(newminhh_repack_stat_to_stat32(&src, &s32) == NM_OK);
-    assert(s32.st_mode == (S_IFREG | 0644));
+    assert(s32.st_mode == (S_IFREG | (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)));
     assert(s32.st_nlink == 7);
     assert(s32.st_size == 123456);
     assert(s32.st_ino == 0x87654321U);
@@ -583,7 +585,7 @@ static void test_struct_repacking(void) {
     assert(newminhh_repack_stat_to_stat64(&src, ps64) == NM_OK);
     assert(ps64->st_ino == 0x123456789ABCDEF0ULL);
     assert(ps64->st_size == 0x100000001LL);
-    assert(ps64->st_mode == (S_IFREG | 0644) && ps64->st_nlink == 7);
+    assert(ps64->st_mode == (S_IFREG | (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) && ps64->st_nlink == 7);
 
     /* EOVERFLOW check on stat32 when st_size > INT32_MAX */
     errno = 0;
@@ -719,7 +721,7 @@ static void test_dl_and_wrappers(void) {
     /* 7. Minimal i386 ELF detection + DL backend delegation */
     char fake_i386_so[128];
     snprintf(fake_i386_so, sizeof(fake_i386_so), "/tmp/newminhh_fake_i386_%d.so", (int)getpid());
-    int fd = open(fake_i386_so, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    int fd = open(fake_i386_so, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
     assert(fd >= 0);
     Elf32_Ehdr eh;
     memset(&eh, 0, sizeof(eh));
@@ -801,14 +803,73 @@ static void test_dl_and_wrappers(void) {
 }
 
 static void test_cstd_features(void) {
-    /* 1. aligned_alloc and free_aligned_sized */
+    /* 0. C23 floor static_assert */
+    static_assert(__STDC_VERSION__ >= 202311L, "Must be compiled under C23 floor");
+
+    /* 1. <stdckdint.h> checked arithmetic (N2683) */
+    uint32_t ckd_res = 0;
+    assert(!ckd_add(&ckd_res, 100u, 200u) && ckd_res == 300u);
+    assert(ckd_add(&ckd_res, 0xFFFFFFFFu, 1u));
+    assert(!ckd_sub(&ckd_res, 500u, 200u) && ckd_res == 300u);
+    assert(ckd_sub(&ckd_res, 10u, 20u));
+    assert(!ckd_mul(&ckd_res, 10u, 30u) && ckd_res == 300u);
+    assert(ckd_mul(&ckd_res, 0x80000000u, 2u));
+
+    /* 2. <stdbit.h> bit operations (N3022) */
+    assert(!stdc_has_single_bit(0u));
+    assert(stdc_has_single_bit(1u));
+    assert(stdc_has_single_bit(2u));
+    assert(!stdc_has_single_bit(3u));
+    assert(stdc_has_single_bit(4096u));
+    assert(stdc_bit_ceil(0u) == 1u);
+    assert(stdc_bit_ceil(1u) == 1u);
+    assert(stdc_bit_ceil(2u) == 2u);
+    assert(stdc_bit_ceil(3u) == 4u);
+    assert(stdc_bit_ceil(4095u) == 4096u);
+    assert(stdc_bit_ceil(4096u) == 4096u);
+
+    /* 3. NM_COUNTOF decay-safe compile-time check */
+    int test_arr[7] = {};
+    static_assert(NM_COUNTOF(test_arr) == 7);
+    constexpr size_t test_arr_cnt = NM_COUNTOF(test_arr);
+    assert(test_arr_cnt == 7);
+
+    /* 4. Structured logging __VA_OPT__(,) */
+    NM_LOG_INFO("cstd", "zero extra args");
+    NM_LOG_INFO("cstd", "val=%d str=%s", 42, "c23");
+
+    /* 5. C23 binary prefix parsing (N2549/N2626) */
+    char *endptr = nullptr;
+    int32_t bval1 = compat___isoc23_strtol("0b1010", &endptr, 0);
+    assert(bval1 == 10);
+    assert(endptr != nullptr && *endptr == '\0');
+
+    uint64_t bval2 = compat___isoc23_strtoull("0B11110000", &endptr, 2);
+    assert(bval2 == 240);
+    assert(endptr != nullptr && *endptr == '\0');
+
+    /* 6. aligned_alloc and free_aligned_sized */
     void *p_align = compat_aligned_alloc(64, 256);
     assert(p_align != nullptr);
     assert(((uintptr_t)p_align & 63u) == 0);
     memset(p_align, 0xAA, 256);
     compat_free_aligned_sized(p_align, 64, 256);
 
-    /* 2. free_sized */
+    /* 7. aligned_alloc non-power-of-2 and overflow rejection */
+    errno = 0;
+    void *p_bad_align = compat_aligned_alloc(3, 64);
+    assert(p_bad_align == nullptr);
+    assert(errno == EINVAL);
+    errno = 0;
+    void *p_bad_align2 = compat_aligned_alloc(2, 64);
+    assert(p_bad_align2 == nullptr);
+    assert(errno == EINVAL);
+    errno = 0;
+    void *p_overflow = compat_aligned_alloc(64, 0xFFFFFFFFu);
+    assert(p_overflow == nullptr);
+    assert(errno == ENOMEM);
+
+    /* 8. free_sized */
     nm_sym_entry_t ent_malloc;
     assert(newminhh_compat_lookup_wrapper("malloc", &ent_malloc) == NM_OK);
     typedef void *(*fn_malloc_t)(uint32_t);
@@ -818,7 +879,7 @@ static void test_cstd_features(void) {
     memset(p_sz, 0x55, 128);
     compat_free_sized(p_sz, 128);
 
-    /* 3. realloc(p, 0) returns nullptr (C17 DR 400 / C23 N2464) */
+    /* 9. realloc(p, 0) returns nullptr (C17 DR 400 / C23 N2464) */
     nm_sym_entry_t ent_realloc;
     assert(newminhh_compat_lookup_wrapper("realloc", &ent_realloc) == NM_OK);
     typedef void *(*fn_realloc_t)(void *, uint32_t);
@@ -828,7 +889,10 @@ static void test_cstd_features(void) {
     void *p_re_zero = p_realloc(p_re, 0);
     assert(p_re_zero == nullptr);
 
-    /* 4. memset_explicit */
+    void *volatile null_p = nullptr;
+    const char *volatile null_str = nullptr;
+
+    /* 10. memset_explicit */
     char explicit_buf[32];
     memset(explicit_buf, 0xEE, sizeof(explicit_buf));
     void *ret_exp = compat_memset_explicit(explicit_buf, 0, (uint32_t)sizeof(explicit_buf));
@@ -836,55 +900,75 @@ static void test_cstd_features(void) {
     for (size_t i = 0; i < sizeof(explicit_buf); i++) {
         assert(explicit_buf[i] == 0);
     }
+    assert(compat_memset_explicit(null_p, 0, 0) == nullptr);
+    assert(compat_memset_explicit(explicit_buf, 0, 0) == explicit_buf);
 
-    /* 5. memchr */
+    /* 11. memchr (const-preserving & zero-length safe) */
     const char haystack[] = "abcdefghijklmnopqrstuvwxyz";
     void *chr_found = compat_memchr(haystack, 'm', (uint32_t)sizeof(haystack));
     assert(chr_found == haystack + 12);
     void *chr_not_found = compat_memchr(haystack, 'Z', (uint32_t)sizeof(haystack));
     assert(chr_not_found == nullptr);
+    assert(compat_memchr(null_p, 'a', 0) == nullptr);
+    assert(compat_memchr(haystack, 'a', 0) == nullptr);
 
-    /* 6. memccpy */
+    /* 12. memccpy */
     char dest[32] = {};
     void *ret_cc = compat_memccpy(dest, "hello-world", '-', 16);
     assert(ret_cc == dest + 6);
     assert(dest[5] == '-');
+    assert(compat_memccpy(null_p, "a", 'a', 1) == nullptr);
+    assert(compat_memccpy(dest, null_p, 'a', 1) == nullptr);
+    assert(compat_memccpy(dest, "a", 'a', 0) == nullptr);
 
-    /* 7. strndup */
+    /* 13. strndup */
     char *dup_str = compat_strndup("testing_c23_strndup", 7);
     assert(dup_str != nullptr);
     assert(strcmp(dup_str, "testing") == 0);
     compat_free_sized(dup_str, 8);
+    assert(compat_strndup(null_str, 5) == nullptr && errno == EINVAL);
 
-    /* 8. timespec_get */
+    /* 14. timespec_get */
     newminhh_timespec32_t ts32 = {};
     int base_ret = compat_timespec_get(&ts32, TIME_UTC);
     assert(base_ret == TIME_UTC);
     assert(ts32.tv_sec > 1700000000);
     assert(ts32.tv_nsec >= 0 && ts32.tv_nsec < 1000000000);
 
-    /* 9. C23 fixed-width printf formatting */
+    /* 15. C23 fixed-width and binary printf formatting (%b, %B, %w64, %wf64) */
     char c23_fmt_buf[128] = {};
     uint32_t c23_args[16] = {};
     int c23_pos = 0;
-    const char *c23_fmt = "%w8d %w16x %w32u %w64d %wf8d %wf64d";
+    const char *c23_fmt = "%b %B %w8d %w16x %w32u %w64d %wf8d %wf64d %d";
     c23_args[c23_pos++] = (uint32_t)(uintptr_t)c23_fmt_buf;
     c23_args[c23_pos++] = (uint32_t)sizeof(c23_fmt_buf);
     c23_args[c23_pos++] = (uint32_t)(uintptr_t)c23_fmt;
-    c23_args[c23_pos++] = (uint32_t)-42;
-    c23_args[c23_pos++] = 0xABCDu;
-    c23_args[c23_pos++] = 12345678u;
-    push_u64(c23_args, &c23_pos, 0x123456789ABCDEF0ULL);
-    c23_args[c23_pos++] = (uint32_t)100;
-    push_u64(c23_args, &c23_pos, 200ULL);
+    c23_args[c23_pos++] = 10u;               /* %b -> 1010 */
+    c23_args[c23_pos++] = 15u;               /* %B -> 1111 */
+    c23_args[c23_pos++] = (uint32_t)-42;     /* %w8d */
+    c23_args[c23_pos++] = 0xABCDu;           /* %w16x */
+    c23_args[c23_pos++] = 12345678u;         /* %w32u */
+    push_u64(c23_args, &c23_pos, 0x123456789ABCDEF0ULL); /* %w64d (2 words) */
+    c23_args[c23_pos++] = (uint32_t)100;     /* %wf8d */
+    push_u64(c23_args, &c23_pos, 200ULL);    /* %wf64d (2 words) */
+    c23_args[c23_pos++] = 999u;              /* trailing %d */
     int c23_flen = compat_snprintf_cdecl(c23_args);
     assert(c23_flen > 0);
-    assert(strcmp(c23_fmt_buf, "-42 abcd 12345678 1311768467463790320 100 200") == 0);
+    assert(strcmp(c23_fmt_buf, "1010 1111 -42 abcd 12345678 1311768467463790320 100 200 999") == 0);
 
-    /* 10. Verify all 9 C11/C23 symbols are registered in g_sym_table */
+    /* 16. C23 const-preserving search (N3020) */
+    const char c_hay[] = "hello world";
+    const char *c_p = strchr(c_hay, 'w');
+    assert(c_p == c_hay + 6);
+    char m_hay[] = "hello world";
+    char *m_p = strchr(m_hay, 'w');
+    assert(m_p == m_hay + 6);
+
+    /* 17. Verify all 9 C11/C23 symbols are registered in g_sym_table */
     const char *new_syms[] = {
         "aligned_alloc", "free_sized", "free_aligned_sized", "memset_explicit",
-        "memchr", "memccpy", "strndup", "timespec_get", "quick_exit"
+        "memchr", "memccpy", "strndup", "timespec_get", "quick_exit",
+        "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoll", "__isoc23_strtoull"
     };
     for (size_t i = 0; i < NM_COUNTOF(new_syms); i++) {
         nm_sym_entry_t lookup_ent;

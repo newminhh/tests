@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "newminhh_cstd.h"
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -50,7 +51,7 @@ int main(int argc, char **argv) {
     dlopen_fn_t p_dlopen = dlopen;
     dlsym_fn_t p_dlsym = dlsym;
     dlclose_fn_t p_dlclose = dlclose;
-    dlerror_fn_t p_dlerror = (dlerror_fn_t)dlerror;
+    dlerror_fn_t p_dlerror = NM_VOIDP_TO_FN(dlerror_fn_t, dlerror);
     void *dbt_lib = NULL;
 
     if (use_dbt) {
@@ -59,9 +60,9 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Failed to load libnewminhh_dbt.so: %s\n", dlerror());
             return 1;
         }
-        p_dlopen = (dlopen_fn_t)dlsym(dbt_lib, "newminhh_dbt_dlopen");
-        p_dlsym = (dlsym_fn_t)dlsym(dbt_lib, "newminhh_dbt_dlsym");
-        p_dlclose = (dlclose_fn_t)dlsym(dbt_lib, "newminhh_dbt_dlclose");
+        p_dlopen = NM_VOIDP_TO_FN(dlopen_fn_t, dlsym(dbt_lib, "newminhh_dbt_dlopen"));
+        p_dlsym = NM_VOIDP_TO_FN(dlsym_fn_t, dlsym(dbt_lib, "newminhh_dbt_dlsym"));
+        p_dlclose = NM_VOIDP_TO_FN(dlclose_fn_t, dlsym(dbt_lib, "newminhh_dbt_dlclose"));
         if (!p_dlopen || !p_dlsym || !p_dlclose) {
             fprintf(stderr, "Missing DBT dl symbols\n");
             return 1;
@@ -79,9 +80,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "dlopen %s failed: %s\n", path_s01, p_dlerror());
         return 1;
     }
-    basic_add_mul_t f_add_mul = (basic_add_mul_t)p_dlsym(h1, "basic_add_mul");
-    basic_format_msg_t f_fmt = (basic_format_msg_t)p_dlsym(h1, "basic_format_msg");
-    basic_get_counter_t f_cnt = (basic_get_counter_t)p_dlsym(h1, "basic_get_counter");
+    basic_add_mul_t f_add_mul = NM_VOIDP_TO_FN(basic_add_mul_t, p_dlsym(h1, "basic_add_mul"));
+    basic_format_msg_t f_fmt = NM_VOIDP_TO_FN(basic_format_msg_t, p_dlsym(h1, "basic_format_msg"));
+    basic_get_counter_t f_cnt = NM_VOIDP_TO_FN(basic_get_counter_t, p_dlsym(h1, "basic_get_counter"));
     if (!f_add_mul || !f_fmt || !f_cnt) {
         fprintf(stderr, "S01 dlsym failed\n");
         return 1;
@@ -107,14 +108,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "dlopen %s failed: %s\n", path_s02, p_dlerror());
         return 1;
     }
-    lifecycle_check_init_t f_init = (lifecycle_check_init_t)p_dlsym(h2, "lifecycle_check_init");
-    lifecycle_get_pid_int80_t f_pid = (lifecycle_get_pid_int80_t)p_dlsym(h2, "lifecycle_get_pid_int80");
-    lifecycle_stat_probe_t f_stat = (lifecycle_stat_probe_t)p_dlsym(h2, "lifecycle_stat_probe");
+    lifecycle_check_init_t f_init = NM_VOIDP_TO_FN(lifecycle_check_init_t, p_dlsym(h2, "lifecycle_check_init"));
+    lifecycle_get_pid_int80_t f_pid = NM_VOIDP_TO_FN(lifecycle_get_pid_int80_t, p_dlsym(h2, "lifecycle_get_pid_int80"));
+    lifecycle_stat_probe_t f_stat = NM_VOIDP_TO_FN(lifecycle_stat_probe_t, p_dlsym(h2, "lifecycle_stat_probe"));
     lifecycle_timespec_rlimit_probe_t f_tsrl =
-        (lifecycle_timespec_rlimit_probe_t)p_dlsym(h2, "lifecycle_timespec_rlimit_probe");
-    lifecycle_register_cb_t f_reg = (lifecycle_register_cb_t)p_dlsym(h2, "lifecycle_register_cb");
-    lifecycle_trigger_cb_t f_trig = (lifecycle_trigger_cb_t)p_dlsym(h2, "lifecycle_trigger_cb");
-    lifecycle_get_guest_cb_t f_gcb = (lifecycle_get_guest_cb_t)p_dlsym(h2, "lifecycle_get_guest_cb");
+        NM_VOIDP_TO_FN(lifecycle_timespec_rlimit_probe_t, p_dlsym(h2, "lifecycle_timespec_rlimit_probe"));
+    lifecycle_register_cb_t f_reg = NM_VOIDP_TO_FN(lifecycle_register_cb_t, p_dlsym(h2, "lifecycle_register_cb"));
+    lifecycle_trigger_cb_t f_trig = NM_VOIDP_TO_FN(lifecycle_trigger_cb_t, p_dlsym(h2, "lifecycle_trigger_cb"));
+    lifecycle_get_guest_cb_t f_gcb = NM_VOIDP_TO_FN(lifecycle_get_guest_cb_t, p_dlsym(h2, "lifecycle_get_guest_cb"));
     if (!f_init || !f_pid || !f_stat || !f_tsrl || !f_reg || !f_trig || !f_gcb) {
         fprintf(stderr, "S02 dlsym failed\n");
         return 1;
@@ -197,8 +198,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "dlopen %s failed: %s\n", path_s03, p_dlerror());
         return 1;
     }
-    plugin_compute_t f_pcomp = (plugin_compute_t)p_dlsym(h3, "plugin_compute");
-    plugin_name_t f_pname = (plugin_name_t)p_dlsym(h3, "plugin_name");
+    plugin_compute_t f_pcomp = NM_VOIDP_TO_FN(plugin_compute_t, p_dlsym(h3, "plugin_compute"));
+    plugin_name_t f_pname = NM_VOIDP_TO_FN(plugin_name_t, p_dlsym(h3, "plugin_name"));
     if (!f_pcomp || !f_pname) {
         fprintf(stderr, "S03 dlsym failed\n");
         return 1;

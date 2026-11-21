@@ -1,3 +1,4 @@
+#include "newminhh_cstd.h"
 #include <dlfcn.h>
 #include <math.h>
 #include <stdio.h>
@@ -16,7 +17,7 @@ int main(int argc, char **argv) {
     }
 
     dlerror();
-    fn_d_d_t p_sqrt = (fn_d_d_t)dlsym(libm, "sqrt");
+    fn_d_d_t p_sqrt = NM_VOIDP_TO_FN(fn_d_d_t, dlsym(libm, "sqrt"));
     const char *err = dlerror();
     if (err || !p_sqrt) {
         fprintf(stderr, "dlsym sqrt failed: %s\n", err ? err : "null");
@@ -24,7 +25,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    fn_d_d_t p_cos = (fn_d_d_t)dlsym(libm, "cos");
+    fn_d_d_t p_cos = NM_VOIDP_TO_FN(fn_d_d_t, dlsym(libm, "cos"));
     err = dlerror();
     if (err || !p_cos) {
         fprintf(stderr, "dlsym cos failed: %s\n", err ? err : "null");
@@ -52,7 +53,7 @@ int main(int argc, char **argv) {
     }
 
     dlerror();
-    plugin_compute_t p_comp = (plugin_compute_t)dlsym(plug, "plugin_compute");
+    plugin_compute_t p_comp = NM_VOIDP_TO_FN(plugin_compute_t, dlsym(plug, "plugin_compute"));
     err = dlerror();
     if (err || !p_comp) {
         fprintf(stderr, "dlsym plugin_compute failed: %s\n", err ? err : "null");
