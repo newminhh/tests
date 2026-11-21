@@ -1,4 +1,9 @@
-CC := gcc
+ifeq ($(origin CC),default)
+  CC := clang
+endif
+CSTD ?= gnu23
+IS_CLANG := $(shell $(CC) -dM -E - < /dev/null 2>/dev/null | grep -c '__clang__')
+
 NASM := nasm
 STRIP := strip
 PYTHON3 := python3
@@ -8,7 +13,12 @@ I386_DIR := $(BUILD_ROOT)/i386
 I386_NEG_DIR := $(I386_DIR)/negatives
 X32_DIR := $(BUILD_ROOT)/x32
 
-CFLAGS_COMMON := -O2 -Wall -Wextra -Werror=implicit-function-declaration
+COMMON_DIR ?= ../../src/common
+
+CFLAGS_COMMON := -O2 -std=$(CSTD) -Wall -Wextra -Wpedantic -Wstrict-prototypes -Werror=implicit-function-declaration -I$(COMMON_DIR)
+ifeq ($(IS_CLANG),1)
+  CFLAGS_COMMON += -Wno-nullability-extension -Wno-gcc-compat -Wno-deprecated-octal-literals
+endif
 CFLAGS_I386 := -m32 $(CFLAGS_COMMON)
 CFLAGS_X32 := $(CFLAGS_COMMON)
 

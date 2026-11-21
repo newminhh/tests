@@ -47,7 +47,7 @@ extern int asm_test_invoke_cdecl_out_vsnprintf(void *tramp, char *buf, uint32_t 
                                                const char *fmt, const uint32_t *va_words);
 extern uint32_t asm_read_gs_u32(uint32_t offset);
 
-extern char g_asm_atexit_seq[32];
+alignas(16) extern char g_asm_atexit_seq[32];
 extern int g_asm_atexit_pos;
 extern uint32_t g_asm_init_argc;
 extern uint32_t g_asm_init_argv;
@@ -110,7 +110,7 @@ static void *mock_dbt_dlsym(void *handle, const char *sym) {
     if ((uintptr_t)handle == 0xCAFEBABEu && strcmp(sym, "guest_sym") == 0) {
         return (void *)(uintptr_t)0xDEADBEEFu;
     }
-    return NULL;
+    return nullptr;
 }
 static int mock_dbt_dlclose(void *handle) {
     return ((uintptr_t)handle == 0xCAFEBABEu) ? 0 : -1;
@@ -152,7 +152,7 @@ static void test_outgoing_marshaling(void) {
     };
     const char *msg = "hello";
     uint32_t a1[3] = {(uint32_t)-4, 50, (uint32_t)(uintptr_t)msg};
-    uint64_t r1 = newminhh_call_x32_sig((void *)target_i32_sum3, &s1, a1, NULL);
+    uint64_t r1 = newminhh_call_x32_sig(NM_FN_TO_VOIDP(target_i32_sum3), &s1, a1, nullptr);
     assert((int32_t)r1 == (-4 * 10 + 50 + 5));
 
     /* 2. u64 + i32 + u64 -> u64 (via EDX:EAX cdecl bridge) */
@@ -168,7 +168,7 @@ static void test_outgoing_marshaling(void) {
     push_u64(a2, &p2, u_a);
     a2[p2++] = (uint32_t)-5;
     push_u64(a2, &p2, u_c);
-    uint64_t r2 = asm_test_call_x32_cdecl_i64((void *)target_u64_mix, &s2, a2);
+    uint64_t r2 = asm_test_call_x32_cdecl_i64(NM_FN_TO_VOIDP(target_u64_mix), &s2, a2);
     assert(r2 == ((u_a ^ u_c) + (uint64_t)(int64_t)-5));
 
     /* 3. f32 + f64 + i32 -> f32 (via XMM0 <-> x87 ST(0)) */
@@ -182,7 +182,7 @@ static void test_outgoing_marshaling(void) {
     push_f32(a3, &p3, 3.25f);
     push_f64(a3, &p3, 4.5);
     a3[p3++] = 10;
-    double r3 = asm_test_call_x32_cdecl_fp((void *)target_f32_calc, &s3, a3);
+    double r3 = asm_test_call_x32_cdecl_fp(NM_FN_TO_VOIDP(target_f32_calc), &s3, a3);
     assert(fabs(r3 - 21.0) < 1e-5);
 
     /* 4. Stack spill > 6 GPR args + mixed doubles -> f64 (x87 ST(0)) */
@@ -201,7 +201,7 @@ static void test_outgoing_marshaling(void) {
     push_u64(a4, &p4, 1000LL);
     push_f64(a4, &p4, 2.5);
     push_f64(a4, &p4, 4.0);
-    double r4 = asm_test_call_x32_cdecl_fp((void *)target_f64_10args, &s4, a4);
+    double r4 = asm_test_call_x32_cdecl_fp(NM_FN_TO_VOIDP(target_f64_10args), &s4, a4);
     assert(fabs(r4 - (28.0 + 1000.0 + 7.5 + 20.0)) < 1e-9);
 
     /* 5. Stack spill > 8 XMM args */
@@ -218,7 +218,7 @@ static void test_outgoing_marshaling(void) {
     int p5 = 0;
     for (int i = 1; i <= 9; i++) push_f64(a5, &p5, (double)i);
     push_f32(a5, &p5, 2.5f);
-    double r5 = asm_test_call_x32_cdecl_fp((void *)target_10xmms, &s5, a5);
+    double r5 = asm_test_call_x32_cdecl_fp(NM_FN_TO_VOIDP(target_10xmms), &s5, a5);
     /* 1+2+3+4+5+6+7+8 + 9*2 + 2.5*4 = 36 + 18 + 10 = 64 */
     assert(fabs(r5 - 64.0) < 1e-9);
 
@@ -226,29 +226,29 @@ static void test_outgoing_marshaling(void) {
     nm_sym_entry_t strlen_ent;
     assert(newminhh_compat_lookup_wrapper("strlen", &strlen_ent) == NM_OK);
     void *out_tramp = newminhh_alloc_out_trampoline(strlen_ent.wrapper_fn, &strlen_ent.sig);
-    assert(out_tramp != NULL);
+    assert(out_tramp != nullptr);
     uint32_t len = asm_test_invoke_cdecl_out_1ptr(out_tramp, "newminhh_x32");
     assert(len == 12);
 
     nm_sym_entry_t strtoull_ent;
     assert(newminhh_compat_lookup_wrapper("strtoull", &strtoull_ent) == NM_OK);
     void *out_strtoull = newminhh_alloc_out_trampoline(strtoull_ent.wrapper_fn, &strtoull_ent.sig);
-    assert(out_strtoull != NULL);
-    char *u64_end = NULL;
+    assert(out_strtoull != nullptr);
+    char *u64_end = nullptr;
     uint64_t u64_val = asm_test_invoke_cdecl_out_strtoull(out_strtoull, "0x123456789ABCDEF0", &u64_end, 16);
-    assert(u64_val == 0x123456789ABCDEF0ULL && u64_end != NULL && *u64_end == '\0');
+    assert(u64_val == 0x123456789ABCDEF0ULL && u64_end != nullptr && *u64_end == '\0');
 
     nm_sym_entry_t sqrt_ent;
     assert(newminhh_compat_lookup_wrapper("sqrt", &sqrt_ent) == NM_OK);
     void *out_sqrt = newminhh_alloc_out_trampoline(sqrt_ent.wrapper_fn, &sqrt_ent.sig);
-    assert(out_sqrt != NULL);
+    assert(out_sqrt != nullptr);
     double sqrt_val = asm_test_invoke_cdecl_out_1f64(out_sqrt, 2.0);
     assert(fabs(sqrt_val - sqrt(2.0)) < 1e-12);
 
     nm_sym_entry_t sqrtf_ent;
     assert(newminhh_compat_lookup_wrapper("sqrtf", &sqrtf_ent) == NM_OK);
     void *out_sqrtf = newminhh_alloc_out_trampoline(sqrtf_ent.wrapper_fn, &sqrtf_ent.sig);
-    assert(out_sqrtf != NULL);
+    assert(out_sqrtf != nullptr);
     float sqrtf_val = asm_test_invoke_cdecl_out_1f32(out_sqrtf, 9.0f);
     assert(fabsf(sqrtf_val - 3.0f) < 1e-6f);
 
@@ -264,8 +264,8 @@ static void test_incoming_bridge(void) {
     };
     uint64_t gprs[6] = {10, 5, 0, 0, 0, 0};
     uint64_t r_add = newminhh_in_bridge((uint32_t)(uintptr_t)asm_cdecl_add2,
-                                        &s_add, gprs, NULL, NULL,
-                                        NM_CB_MODE_NATIVE_CDECL, NULL);
+                                        &s_add, gprs, nullptr, nullptr,
+                                        NM_CB_MODE_NATIVE_CDECL, nullptr);
     assert((int32_t)r_add == (10 * 3 + 5 * 7));
 
     /* 2. Direct newminhh_in_bridge -> asm_cdecl_f64_mul_add (x87 ST(0)) */
@@ -281,7 +281,7 @@ static void test_incoming_bridge(void) {
     memcpy(&xmms[1], &fb, sizeof(fb));
     double fp_out = 0.0;
     newminhh_in_bridge((uint32_t)(uintptr_t)asm_cdecl_f64_mul_add,
-                       &s_fp, NULL, xmms, NULL,
+                       &s_fp, nullptr, xmms, nullptr,
                        NM_CB_MODE_NATIVE_CDECL, &fp_out);
     assert(fabs(fp_out - (6.0 * 2.5 + 1.5)) < 1e-9);
 
@@ -293,29 +293,29 @@ static void test_incoming_bridge(void) {
     };
     uint64_t g64[6] = {0x12345678u, 0x9ABCDEF0u, 0, 0, 0, 0};
     uint64_t r_i64 = newminhh_in_bridge((uint32_t)(uintptr_t)asm_cdecl_i64_combine,
-                                        &s_i64, g64, NULL, NULL,
-                                        NM_CB_MODE_NATIVE_CDECL, NULL);
+                                        &s_i64, g64, nullptr, nullptr,
+                                        NM_CB_MODE_NATIVE_CDECL, nullptr);
     assert(r_i64 == 0x123456789ABCDEF0ULL);
 
     /* 4. .so export trampoline + .init_array / .fini_array helpers */
     typedef int (*add2_fn_t)(int, int);
-    add2_fn_t exp_add = (add2_fn_t)newminhh_wrap_so_export(
-        (uint32_t)(uintptr_t)asm_cdecl_add2, &s_add, NM_CB_MODE_NATIVE_CDECL);
-    assert(exp_add != NULL);
+    add2_fn_t exp_add = NM_VOIDP_TO_FN(add2_fn_t, newminhh_wrap_so_export(
+        (uint32_t)(uintptr_t)asm_cdecl_add2, &s_add, NM_CB_MODE_NATIVE_CDECL));
+    assert(exp_add != nullptr);
     assert(exp_add(4, 6) == (4 * 3 + 6 * 7));
 
     typedef double (*fp_fn_t)(double, float);
-    fp_fn_t exp_fp = (fp_fn_t)newminhh_wrap_so_export(
-        (uint32_t)(uintptr_t)asm_cdecl_f64_mul_add, &s_fp, NM_CB_MODE_NATIVE_CDECL);
-    assert(exp_fp != NULL);
+    fp_fn_t exp_fp = NM_VOIDP_TO_FN(fp_fn_t, newminhh_wrap_so_export(
+        (uint32_t)(uintptr_t)asm_cdecl_f64_mul_add, &s_fp, NM_CB_MODE_NATIVE_CDECL));
+    assert(exp_fp != nullptr);
     assert(fabs(exp_fp(4.0, 3.0f) - 13.0) < 1e-9);
 
     typedef void (*init_fn_t)(int, char **, char **);
-    init_fn_t init_w = (init_fn_t)newminhh_wrap_init_array_fn(
-        (uint32_t)(uintptr_t)asm_cdecl_init_fn, NM_CB_MODE_NATIVE_CDECL);
-    assert(init_w != NULL);
-    char *fake_argv[2] = {"prog", NULL};
-    char *fake_envp[1] = {NULL};
+    init_fn_t init_w = NM_VOIDP_TO_FN(init_fn_t, newminhh_wrap_init_array_fn(
+        (uint32_t)(uintptr_t)asm_cdecl_init_fn, NM_CB_MODE_NATIVE_CDECL));
+    assert(init_w != nullptr);
+    char *fake_argv[2] = {"prog", nullptr};
+    char *fake_envp[1] = {nullptr};
     init_w(1, fake_argv, fake_envp);
     assert(g_asm_init_argc == 1);
     assert(g_asm_init_argv == (uint32_t)(uintptr_t)fake_argv);
@@ -324,9 +324,9 @@ static void test_incoming_bridge(void) {
     g_asm_atexit_pos = 0;
     memset(g_asm_atexit_seq, 0, sizeof(g_asm_atexit_seq));
     typedef void (*fini_fn_t)(void);
-    fini_fn_t fini_w = (fini_fn_t)newminhh_wrap_fini_array_fn(
-        (uint32_t)(uintptr_t)asm_cdecl_atexit_1, NM_CB_MODE_NATIVE_CDECL);
-    assert(fini_w != NULL);
+    fini_fn_t fini_w = NM_VOIDP_TO_FN(fini_fn_t, newminhh_wrap_fini_array_fn(
+        (uint32_t)(uintptr_t)asm_cdecl_atexit_1, NM_CB_MODE_NATIVE_CDECL));
+    assert(fini_w != nullptr);
     fini_w();
     assert(g_asm_atexit_pos == 1 && g_asm_atexit_seq[0] == '1');
 
@@ -340,8 +340,8 @@ static void test_incoming_bridge(void) {
         g_asm_entry_esp_mod16 = 0xFFFFFFFFu;
         uint64_t g_al[6] = {1, 2, 3, 4, 5, 6};
         uint64_t mod16 = newminhh_in_bridge((uint32_t)(uintptr_t)asm_cdecl_check_align,
-                                            &s_align, g_al, NULL, NULL,
-                                            NM_CB_MODE_NATIVE_CDECL, NULL);
+                                            &s_align, g_al, nullptr, nullptr,
+                                            NM_CB_MODE_NATIVE_CDECL, nullptr);
         assert(mod16 == 12u);
         assert(g_asm_entry_esp_mod16 == 12u);
     }
@@ -363,7 +363,7 @@ static void test_callbacks_and_trampoline_pool(void) {
 
     int32_t missing_key = 1234;
     assert(compat_bsearch(&missing_key, arr, 7, sizeof(int32_t),
-                          (uint32_t)(uintptr_t)asm_cdecl_qsort_cmp_i32) == NULL);
+                          (uint32_t)(uintptr_t)asm_cdecl_qsort_cmp_i32) == nullptr);
 
     /* 2. pthread_create with GS base propagation + 24-byte i386 mutex */
     uint32_t fake_tls[4] = {0x11110000u, 0x00002222u, 0, 0};
@@ -384,10 +384,10 @@ static void test_callbacks_and_trampoline_pool(void) {
     assert(compat_pthread_mutex_unlock(i386_mutex) == 0);
     assert(compat_pthread_mutex_destroy(i386_mutex) == 0);
 
-    assert(compat_pthread_create(&th, NULL,
+    assert(compat_pthread_create(&th, nullptr,
                                  (uint32_t)(uintptr_t)asm_cdecl_pthread_worker,
                                  (uint32_t)(uintptr_t)th_out) == 0);
-    void *th_ret = NULL;
+    void *th_ret = nullptr;
     assert(compat_pthread_join(th, &th_ret) == 0);
     assert(th_out[0] == 0x11112222u);
     assert((uint32_t)(uintptr_t)th_ret == 0x11112222u + 100u);
@@ -414,9 +414,9 @@ static void test_callbacks_and_trampoline_pool(void) {
         }
     };
     typedef int (*fn8_t)(int, int, int, int, int, int, int, int);
-    fn8_t pfn8 = (fn8_t)newminhh_alloc_cb_trampoline(
-        (uint32_t)(uintptr_t)asm_cdecl_pool_8i, &s_pool8, NM_CB_MODE_NATIVE_CDECL, 0);
-    assert(pfn8 != NULL);
+    fn8_t pfn8 = NM_VOIDP_TO_FN(fn8_t, newminhh_alloc_cb_trampoline(
+        (uint32_t)(uintptr_t)asm_cdecl_pool_8i, &s_pool8, NM_CB_MODE_NATIVE_CDECL, 0));
+    assert(pfn8 != nullptr);
     /* 1+2+3+4+5+6+7 + 8*10 = 28 + 80 = 108 */
     assert(pfn8(1, 2, 3, 4, 5, 6, 7, 8) == 108);
 
@@ -428,14 +428,14 @@ static void test_callbacks_and_trampoline_pool(void) {
         .arg_kinds = {NM_ARG_I32, NM_ARG_I32}
     };
     typedef int (*fn2_t)(int, int);
-    fn2_t pfn_dbt = (fn2_t)newminhh_alloc_cb_trampoline(
-        0x08049999u, &s_dbt, NM_CB_MODE_DBT, 0);
-    assert(pfn_dbt != NULL);
+    fn2_t pfn_dbt = NM_VOIDP_TO_FN(fn2_t, newminhh_alloc_cb_trampoline(
+        0x08049999u, &s_dbt, NM_CB_MODE_DBT, 0));
+    assert(pfn_dbt != nullptr);
     int dbt_res = pfn_dbt(4, 3);
     assert(g_mock_dbt_calls == 1);
     assert(g_mock_dbt_last_va == 0x08049999u);
     assert(dbt_res == (4 * 5 + 3 * 11));
-    newminhh_register_guest_invoker(NULL);
+    newminhh_register_guest_invoker(nullptr);
 
     /* 6. compat_signal dispatching to cdecl ASM handler */
     g_asm_sig_got = 0;
@@ -538,7 +538,7 @@ static void test_syscalls(void) {
     newminhh_register_brk_hook(mock_brk_hook);
     assert((uint32_t)newminhh_compat_syscall(45 /* brk */, 0, 0, 0, 0, 0, 0) == 0x09000000u);
     assert((uint32_t)newminhh_compat_syscall(45 /* brk */, 0x09004000u, 0, 0, 0, 0, 0) == 0x09004000u);
-    newminhh_register_brk_hook(NULL);
+    newminhh_register_brk_hook(nullptr);
 
     /* 8. Unsupported syscall returns -ENOSYS and logs diagnostic */
     int32_t unsup = newminhh_compat_syscall(9999u, 1, 2, 3, 4, 5, 6);
@@ -576,7 +576,7 @@ static void test_struct_repacking(void) {
     assert(s32.st_mtim.tv_sec == 1700000002);
 
     /* Unaligned buffer check for stat64 (96B) and stat64_t64 (108B) */
-    uint8_t unaligned_buf[128] __attribute__((aligned(4)));
+    alignas(4) uint8_t unaligned_buf[128];
     newminhh_stat64_t *ps64 = (newminhh_stat64_t *)(unaligned_buf + 4);
     src.st_ino = 0x123456789ABCDEF0ULL;
     src.st_size = 0x100000001LL; /* > 4 GiB */
@@ -618,9 +618,10 @@ static void test_struct_repacking(void) {
     assert(rl_back.rlim_cur == 1024 && rl_back.rlim_max == RLIM_INFINITY);
 
     /* NULL pointer rejection */
-    assert(newminhh_repack_stat_to_stat32(NULL, &s32) == NM_ERR_ABI);
-    assert(newminhh_repack_timespec_to_32(&xts, NULL) == NM_ERR_ABI);
-    assert(newminhh_repack_rlimit_to_64t32(NULL, NULL) == NM_ERR_ABI);
+    void *volatile null_p = nullptr;
+    assert(newminhh_repack_stat_to_stat32((const struct stat *)null_p, &s32) == NM_ERR_ABI);
+    assert(newminhh_repack_timespec_to_32(&xts, (newminhh_timespec32_t *)null_p) == NM_ERR_ABI);
+    assert(newminhh_repack_rlimit_to_64t32((const struct rlimit *)null_p, (newminhh_rlimit64_t32_t *)null_p) == NM_ERR_ABI);
 
     printf("PASS test_struct_repacking\n");
 }
@@ -628,19 +629,21 @@ static void test_struct_repacking(void) {
 static void test_dl_and_wrappers(void) {
     /* 1. Positive libc.so.6 + libm.so.6 dlopen/dlsym */
     void *h_libc = compat_dlopen("libc.so.6", RTLD_NOW);
-    assert(h_libc != NULL);
-    uint32_t (*fn_strlen)(const char *) = (uint32_t (*)(const char *))compat_dlsym(h_libc, "strlen");
-    assert(fn_strlen != NULL);
+    assert(h_libc != nullptr);
+    typedef uint32_t (*fn_strlen_t)(const char *);
+    fn_strlen_t fn_strlen = NM_VOIDP_TO_FN(fn_strlen_t, compat_dlsym(h_libc, "strlen"));
+    assert(fn_strlen != nullptr);
     assert(fn_strlen("abcd") == 4);
 
     FILE **p_stdout = (FILE **)compat_dlsym(h_libc, "stdout");
-    assert(p_stdout != NULL && *p_stdout == stdout);
+    assert(p_stdout != nullptr && *p_stdout == stdout);
 
     void *h_libm = compat_dlopen("libm.so.6", RTLD_NOW);
-    assert(h_libm != NULL);
-    double (*fn_sqrt)(double) = (double (*)(double))compat_dlsym(h_libm, "sqrt");
-    double (*fn_cos)(double) = (double (*)(double))compat_dlsym(h_libm, "cos");
-    assert(fn_sqrt != NULL && fn_cos != NULL);
+    assert(h_libm != nullptr);
+    typedef double (*fn_math1_t)(double);
+    fn_math1_t fn_sqrt = NM_VOIDP_TO_FN(fn_math1_t, compat_dlsym(h_libm, "sqrt"));
+    fn_math1_t fn_cos = NM_VOIDP_TO_FN(fn_math1_t, compat_dlsym(h_libm, "cos"));
+    assert(fn_sqrt != nullptr && fn_cos != nullptr);
     assert(fabs(fn_sqrt(25.0) - 5.0) < 1e-9);
     assert(fabs(fn_cos(0.0) - 1.0) < 1e-9);
 
@@ -648,36 +651,37 @@ static void test_dl_and_wrappers(void) {
     compat_dlerror(); /* clear */
     void *bad_sym = compat_dlsym(h_libc, "gnu_get_libc_version");
     const char *err = compat_dlerror();
-    assert(bad_sym == NULL && err != NULL && strstr(err, "unsupported") != NULL);
+    assert(bad_sym == nullptr && err != nullptr && strstr(err, "unsupported") != nullptr);
 
     /* 3. Negative: nonexistent .so */
     void *bad_lib = compat_dlopen("/nonexistent/libmissing_newminhh.so", RTLD_NOW);
     err = compat_dlerror();
-    assert(bad_lib == NULL && err != NULL);
+    assert(bad_lib == nullptr && err != nullptr);
 
     /* 4. Negative: forged/invalid handle + double dlclose */
-    assert(compat_dlsym((void *)(uintptr_t)0x123456u, "strlen") == NULL);
-    assert(compat_dlerror() != NULL);
+    assert(compat_dlsym((void *)(uintptr_t)0x123456u, "strlen") == nullptr);
+    assert(compat_dlerror() != nullptr);
     assert(compat_dlclose(h_libm) == 0);
     assert(compat_dlclose(h_libm) != 0);
-    assert(compat_dlerror() != NULL);
+    assert(compat_dlerror() != nullptr);
     assert(compat_dlclose(h_libc) == 0);
 
     /* 5. Wrapper lookup API negative tests */
     nm_sym_entry_t ent;
     assert(newminhh_compat_lookup_wrapper("nonexistent_sym_xyz", &ent) == NM_ERR_DLSYM);
-    assert(newminhh_compat_lookup_wrapper(NULL, &ent) == NM_ERR_ABI);
+    const char *volatile null_sym_name = nullptr;
+    assert(newminhh_compat_lookup_wrapper(null_sym_name, &ent) == NM_ERR_ABI);
 
     /* 6. cdecl_mode dlopen + compat_dlsym_cdecl outgoing trampolines (incl. CDECL_DIRECT, U64, F64) */
     void *h_cdecl = compat_dlopen("libc.so.6", RTLD_NOW | NM_RTLD_CDECL);
-    assert(h_cdecl != NULL);
+    assert(h_cdecl != nullptr);
     void *tramp_strlen = compat_dlsym(h_cdecl, "strlen");
-    assert(tramp_strlen != NULL);
+    assert(tramp_strlen != nullptr);
     assert(asm_test_invoke_cdecl_out_1ptr(tramp_strlen, "tramp_ok") == 8);
 
     void *tramp_snp_mode = compat_dlsym(h_cdecl, "snprintf");
-    assert(tramp_snp_mode != NULL);
-    assert(tramp_snp_mode != (void *)compat_snprintf_cdecl);
+    assert(tramp_snp_mode != nullptr);
+    assert(tramp_snp_mode != NM_FN_TO_VOIDP(compat_snprintf_cdecl));
     char snp_buf1[64] = {0};
     int snp_len1 = asm_test_invoke_cdecl_out_snprintf(tramp_snp_mode, snp_buf1, sizeof(snp_buf1),
                                                       "%d:%.2f:%s", -42, 6.25, "cdecl");
@@ -687,30 +691,30 @@ static void test_dl_and_wrappers(void) {
     /* Explicit compat_dlsym_cdecl on standard RTLD_NOW handles */
     void *h_libc_d = compat_dlopen("libc.so.6", RTLD_NOW);
     void *h_libm_d = compat_dlopen("libm.so.6", RTLD_NOW);
-    assert(h_libc_d != NULL && h_libm_d != NULL);
+    assert(h_libc_d != nullptr && h_libm_d != nullptr);
 
     void *cdecl_snp = compat_dlsym_cdecl(h_libc_d, "snprintf");
-    assert(cdecl_snp != NULL && cdecl_snp != (void *)compat_snprintf_cdecl);
+    assert(cdecl_snp != nullptr && cdecl_snp != NM_FN_TO_VOIDP(compat_snprintf_cdecl));
     char snp_buf2[64] = {0};
     int snp_len2 = asm_test_invoke_cdecl_out_snprintf(cdecl_snp, snp_buf2, sizeof(snp_buf2),
                                                       "%d:%.2f:%s", 77, 1.5, "ok");
     assert(snp_len2 == 10 && strcmp(snp_buf2, "77:1.50:ok") == 0);
 
     void *cdecl_strtoull = compat_dlsym_cdecl(h_libc_d, "strtoull");
-    assert(cdecl_strtoull != NULL);
-    char *dl_u64_end = NULL;
+    assert(cdecl_strtoull != nullptr);
+    char *dl_u64_end = nullptr;
     uint64_t dl_u64 = asm_test_invoke_cdecl_out_strtoull(cdecl_strtoull, "0xFEDCBA9876543210", &dl_u64_end, 16);
-    assert(dl_u64 == 0xFEDCBA9876543210ULL && dl_u64_end != NULL && *dl_u64_end == '\0');
+    assert(dl_u64 == 0xFEDCBA9876543210ULL && dl_u64_end != nullptr && *dl_u64_end == '\0');
 
     void *cdecl_sqrt = compat_dlsym_cdecl(h_libm_d, "sqrt");
-    assert(cdecl_sqrt != NULL);
+    assert(cdecl_sqrt != nullptr);
     double dl_sqrt = asm_test_invoke_cdecl_out_1f64(cdecl_sqrt, 144.0);
     assert(fabs(dl_sqrt - 12.0) < 1e-12);
 
     /* Ensure newminhh_compat_lookup_wrapper still reports NM_SYM_FLAG_CDECL_DIRECT for Part 4 DBT */
     assert(newminhh_compat_lookup_wrapper("snprintf", &ent) == NM_OK);
     assert((ent.flags & NM_SYM_FLAG_CDECL_DIRECT) != 0);
-    assert(ent.wrapper_fn == (void *)compat_snprintf_cdecl);
+    assert(ent.wrapper_fn == NM_FN_TO_VOIDP(compat_snprintf_cdecl));
 
     /* 7. Minimal i386 ELF detection + DL backend delegation */
     char fake_i386_so[128];
@@ -730,8 +734,8 @@ static void test_dl_and_wrappers(void) {
     close(fd);
 
     /* Without backend -> fails loudly */
-    assert(compat_dlopen(fake_i386_so, RTLD_NOW) == NULL);
-    assert(compat_dlerror() != NULL);
+    assert(compat_dlopen(fake_i386_so, RTLD_NOW) == nullptr);
+    assert(compat_dlerror() != nullptr);
 
     /* With backend -> delegates cleanly */
     nm_dl_backend_t backend = {
@@ -739,20 +743,20 @@ static void test_dl_and_wrappers(void) {
         .dlsym_fn = mock_dbt_dlsym,
         .dlclose_fn = mock_dbt_dlclose,
         .dlerror_fn = mock_dbt_dlerror,
-        .is_guest_elf_fn = NULL
+        .is_guest_elf_fn = nullptr
     };
     newminhh_register_dl_backend(&backend);
     void *h_dbt = compat_dlopen(fake_i386_so, RTLD_NOW);
-    assert(h_dbt != NULL && g_mock_dl_calls == 1);
+    assert(h_dbt != nullptr && g_mock_dl_calls == 1);
     assert(compat_dlsym(h_dbt, "guest_sym") == (void *)(uintptr_t)0xDEADBEEFu);
-    assert(compat_dlsym(h_dbt, "missing_guest_sym") == NULL);
-    assert(compat_dlerror() != NULL);
+    assert(compat_dlsym(h_dbt, "missing_guest_sym") == nullptr);
+    assert(compat_dlerror() != nullptr);
     assert(compat_dlclose(h_dbt) == 0);
-    newminhh_register_dl_backend(NULL);
+    newminhh_register_dl_backend(nullptr);
     unlink(fake_i386_so);
 
     /* 8. compat_snprintf_cdecl, compat_vsnprintf (i386 va_list), & newminhh_get_stdio_streams */
-    FILE *f_in = NULL, *f_out = NULL, *f_err = NULL;
+    FILE *f_in = nullptr, *f_out = nullptr, *f_err = nullptr;
     newminhh_get_stdio_streams(&f_in, &f_out, &f_err);
     assert(f_in == stdin && f_out == stdout && f_err == stderr);
 
@@ -783,7 +787,7 @@ static void test_dl_and_wrappers(void) {
     assert(vslen == flen && strcmp(vs_out, "-7:4294967297:3.25:ok") == 0);
 
     void *cdecl_vsnp = compat_dlsym_cdecl(h_libc_d, "vsnprintf");
-    assert(cdecl_vsnp != NULL);
+    assert(cdecl_vsnp != nullptr);
     char vsnp_asm_out[128] = {0};
     int vsnp_asm_len = asm_test_invoke_cdecl_out_vsnprintf(cdecl_vsnp, vsnp_asm_out,
                                                            (uint32_t)sizeof(vsnp_asm_out),
@@ -796,6 +800,101 @@ static void test_dl_and_wrappers(void) {
     printf("PASS test_dl_and_wrappers\n");
 }
 
+static void test_cstd_features(void) {
+    /* 1. aligned_alloc and free_aligned_sized */
+    void *p_align = compat_aligned_alloc(64, 256);
+    assert(p_align != nullptr);
+    assert(((uintptr_t)p_align & 63u) == 0);
+    memset(p_align, 0xAA, 256);
+    compat_free_aligned_sized(p_align, 64, 256);
+
+    /* 2. free_sized */
+    nm_sym_entry_t ent_malloc;
+    assert(newminhh_compat_lookup_wrapper("malloc", &ent_malloc) == NM_OK);
+    typedef void *(*fn_malloc_t)(uint32_t);
+    fn_malloc_t p_malloc = NM_VOIDP_TO_FN(fn_malloc_t, ent_malloc.wrapper_fn);
+    void *p_sz = p_malloc(128);
+    assert(p_sz != nullptr);
+    memset(p_sz, 0x55, 128);
+    compat_free_sized(p_sz, 128);
+
+    /* 3. realloc(p, 0) returns nullptr (C17 DR 400 / C23 N2464) */
+    nm_sym_entry_t ent_realloc;
+    assert(newminhh_compat_lookup_wrapper("realloc", &ent_realloc) == NM_OK);
+    typedef void *(*fn_realloc_t)(void *, uint32_t);
+    fn_realloc_t p_realloc = NM_VOIDP_TO_FN(fn_realloc_t, ent_realloc.wrapper_fn);
+    void *p_re = p_malloc(64);
+    assert(p_re != nullptr);
+    void *p_re_zero = p_realloc(p_re, 0);
+    assert(p_re_zero == nullptr);
+
+    /* 4. memset_explicit */
+    char explicit_buf[32];
+    memset(explicit_buf, 0xEE, sizeof(explicit_buf));
+    void *ret_exp = compat_memset_explicit(explicit_buf, 0, (uint32_t)sizeof(explicit_buf));
+    assert(ret_exp == explicit_buf);
+    for (size_t i = 0; i < sizeof(explicit_buf); i++) {
+        assert(explicit_buf[i] == 0);
+    }
+
+    /* 5. memchr */
+    const char haystack[] = "abcdefghijklmnopqrstuvwxyz";
+    void *chr_found = compat_memchr(haystack, 'm', (uint32_t)sizeof(haystack));
+    assert(chr_found == haystack + 12);
+    void *chr_not_found = compat_memchr(haystack, 'Z', (uint32_t)sizeof(haystack));
+    assert(chr_not_found == nullptr);
+
+    /* 6. memccpy */
+    char dest[32] = {};
+    void *ret_cc = compat_memccpy(dest, "hello-world", '-', 16);
+    assert(ret_cc == dest + 6);
+    assert(dest[5] == '-');
+
+    /* 7. strndup */
+    char *dup_str = compat_strndup("testing_c23_strndup", 7);
+    assert(dup_str != nullptr);
+    assert(strcmp(dup_str, "testing") == 0);
+    compat_free_sized(dup_str, 8);
+
+    /* 8. timespec_get */
+    newminhh_timespec32_t ts32 = {};
+    int base_ret = compat_timespec_get(&ts32, TIME_UTC);
+    assert(base_ret == TIME_UTC);
+    assert(ts32.tv_sec > 1700000000);
+    assert(ts32.tv_nsec >= 0 && ts32.tv_nsec < 1000000000);
+
+    /* 9. C23 fixed-width printf formatting */
+    char c23_fmt_buf[128] = {};
+    uint32_t c23_args[16] = {};
+    int c23_pos = 0;
+    const char *c23_fmt = "%w8d %w16x %w32u %w64d %wf8d %wf64d";
+    c23_args[c23_pos++] = (uint32_t)(uintptr_t)c23_fmt_buf;
+    c23_args[c23_pos++] = (uint32_t)sizeof(c23_fmt_buf);
+    c23_args[c23_pos++] = (uint32_t)(uintptr_t)c23_fmt;
+    c23_args[c23_pos++] = (uint32_t)-42;
+    c23_args[c23_pos++] = 0xABCDu;
+    c23_args[c23_pos++] = 12345678u;
+    push_u64(c23_args, &c23_pos, 0x123456789ABCDEF0ULL);
+    c23_args[c23_pos++] = (uint32_t)100;
+    push_u64(c23_args, &c23_pos, 200ULL);
+    int c23_flen = compat_snprintf_cdecl(c23_args);
+    assert(c23_flen > 0);
+    assert(strcmp(c23_fmt_buf, "-42 abcd 12345678 1311768467463790320 100 200") == 0);
+
+    /* 10. Verify all 9 C11/C23 symbols are registered in g_sym_table */
+    const char *new_syms[] = {
+        "aligned_alloc", "free_sized", "free_aligned_sized", "memset_explicit",
+        "memchr", "memccpy", "strndup", "timespec_get", "quick_exit"
+    };
+    for (size_t i = 0; i < NM_COUNTOF(new_syms); i++) {
+        nm_sym_entry_t lookup_ent;
+        assert(newminhh_compat_lookup_wrapper(new_syms[i], &lookup_ent) == NM_OK);
+        assert(lookup_ent.wrapper_fn != nullptr);
+    }
+
+    printf("PASS test_cstd_features\n");
+}
+
 int main(void) {
     test_outgoing_marshaling();
     test_incoming_bridge();
@@ -803,6 +902,7 @@ int main(void) {
     test_syscalls();
     test_struct_repacking();
     test_dl_and_wrappers();
+    test_cstd_features();
     printf("ALL_PART2_TESTS_PASSED\n");
     return 0;
 }

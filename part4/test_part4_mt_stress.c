@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "../../src/common/newminhh_cstd.h"
 #include "../../src/dbt/dbt_internal.h"
 
 #include <errno.h>
@@ -40,7 +41,8 @@ static int test_sigsegv_sigign_in_child(void) {
             _exit(3);
         }
         typedef int (*add_mul_t)(int, int, int);
-        int res = ((add_mul_t)(uintptr_t)fn_va)(3, 4, 2);
+        add_mul_t add_mul_fn = NM_VOIDP_TO_FN(add_mul_t, fn_va);
+        int res = add_mul_fn(3, 4, 2);
         if (res == 0) {
             fprintf(stderr, "child: unexpected 0 from basic_add_mul\n");
             _exit(4);
@@ -81,11 +83,11 @@ typedef struct {
 static void *fc_worker(void *raw) {
     fc_worker_arg_t *arg = (fc_worker_arg_t *)raw;
 
-    uint8_t *stk = (uint8_t *)mmap(NULL, 65536, PROT_READ | PROT_WRITE,
+    uint8_t *stk = (uint8_t *)mmap(nullptr, 65536, PROT_READ | PROT_WRITE,
                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (stk == MAP_FAILED) {
         arg->failed = 1;
-        return NULL;
+        return nullptr;
     }
     uint32_t sp_base = (uint32_t)(uintptr_t)(stk + 65536 - 64);
 
@@ -98,8 +100,7 @@ static void *fc_worker(void *raw) {
         sp[0] = DBT_MAGIC_RET_TO_HOST;
         sp[1] = arg->fn_vas[k];
 
-        newminhh_cpu_t cpu;
-        memset(&cpu, 0, sizeof(cpu));
+        newminhh_cpu_t cpu = {};
         cpu.eflags = 0x202u;
         cpu.gpr[NM_REG_ESP] = sp_base;
 
@@ -114,12 +115,12 @@ static void *fc_worker(void *raw) {
     }
 
     munmap(stk, 65536);
-    return NULL;
+    return nullptr;
 }
 
 static int test_fast_cache_collision_mt(void) {
     size_t region_sz = 2u * 1024u * 1024u;
-    uint8_t *raw = (uint8_t *)mmap(NULL, region_sz, PROT_READ | PROT_WRITE,
+    uint8_t *raw = (uint8_t *)mmap(nullptr, region_sz, PROT_READ | PROT_WRITE,
                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED) {
         perror("mmap 2MiB");
@@ -159,7 +160,7 @@ static int test_fast_cache_collision_mt(void) {
         args[i].dispatch_va = disp_va;
         memcpy(args[i].fn_vas, fn_vas, sizeof(fn_vas));
         args[i].failed = 0;
-        if (pthread_create(&th[i], NULL, fc_worker, &args[i]) != 0) {
+        if (pthread_create(&th[i], nullptr, fc_worker, &args[i]) != 0) {
             perror("pthread_create");
             munmap(raw, region_sz);
             return 1;
@@ -168,7 +169,7 @@ static int test_fast_cache_collision_mt(void) {
 
     int failed = 0;
     for (int i = 0; i < FC_NTHREADS; i++) {
-        pthread_join(th[i], NULL);
+        pthread_join(th[i], nullptr);
         if (args[i].failed) failed = 1;
     }
 
@@ -180,7 +181,7 @@ static int test_fast_cache_collision_mt(void) {
 
 /* --- 3. Direct edge unchaining test --- */
 static int test_direct_edge_unchaining(void) {
-    uint8_t *page = (uint8_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+    uint8_t *page = (uint8_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) {
         perror("mmap");
@@ -207,8 +208,8 @@ static int test_direct_edge_unchaining(void) {
     uint32_t va_a = (uint32_t)(uintptr_t)page;
     uint32_t va_b = (uint32_t)(uintptr_t)(page + 0x40);
 
-    int r1 = newminhh_dbt_enter_at(va_a, NULL);
-    int r2 = newminhh_dbt_enter_at(va_a, NULL);
+    int r1 = newminhh_dbt_enter_at(va_a, nullptr);
+    int r2 = newminhh_dbt_enter_at(va_a, nullptr);
     if (r1 != 111 || r2 != 111) {
         fprintf(stderr, "unchain pre-check failed: r1=%d r2=%d (expected 111)\n", r1, r2);
         munmap(page, 4096);
@@ -230,8 +231,9 @@ static int test_direct_edge_unchaining(void) {
     }
     dbt_invalidate_cache_range(va_b, 16);
 
-    int r3 = newminhh_dbt_enter_at(va_a, NULL);
-    int r4 = newminhh_dbt_enter_at(va_a, NULL);
+    int r3 = newminhh_dbt_enter_at(va_a, nullptr);
+    int r4 = newminhh_dbt_enter_at(va_a, nullptr);
+    dbt_invalidate_cache_range(va_a, 4096);
     munmap(page, 4096);
     if (r3 != 222 || r4 != 222) {
         fprintf(stderr, "direct edge unchaining failed: r3=%d r4=%d (expected 222)\n", r3, r4);
@@ -257,7 +259,7 @@ static void *mt_stress_worker(void *raw) {
     mt_stress_arg_t *arg = (mt_stress_arg_t *)raw;
     typedef int (*fn3_t)(int, int, int);
     typedef int (*fn2_t)(int, int);
-    fn3_t raw_fn = (fn3_t)(uintptr_t)arg->raw_fn_va;
+    fn3_t raw_fn = NM_VOIDP_TO_FN(fn3_t, arg->raw_fn_va);
 
     for (int i = 0; i < MT_ITERS; i++) {
         /* A. Raw PROT_READ guest pointer invocation -> SIGSEGV NX-guard trampoline */
@@ -280,7 +282,7 @@ static void *mt_stress_worker(void *raw) {
             int32_t nxt = newminhh_compat_syscall(45u, (uint32_t)cur + 4096u, 0, 0, 0, 0, 0);
             if (nxt < cur) {
                 fprintf(stderr, "mt brk went backwards tid=%d: cur=%d nxt=%d\n",
-                        arg->tid, cur, nxt);
+                    arg->tid, cur, nxt);
                 arg->failed = 1;
                 break;
             }
@@ -295,7 +297,7 @@ static void *mt_stress_worker(void *raw) {
                 arg->failed = 1;
                 break;
             }
-            fn2_t pfn = (fn2_t)newminhh_dbt_dlsym(h, "plugin_compute");
+            fn2_t pfn = NM_VOIDP_TO_FN(fn2_t, newminhh_dbt_dlsym(h, "plugin_compute"));
             if (!pfn || pfn(7, 5) != 47) {
                 fprintf(stderr, "mt dlsym/invoke failed tid=%d iter=%d\n", arg->tid, i);
                 newminhh_dbt_dlclose(h);
@@ -309,7 +311,7 @@ static void *mt_stress_worker(void *raw) {
             }
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static int test_concurrent_brk_dl_sigsegv(void) {
@@ -337,7 +339,7 @@ static int test_concurrent_brk_dl_sigsegv(void) {
     }
     close(fd);
 
-    dbt_module_t *main_mod = NULL;
+    dbt_module_t *main_mod = nullptr;
     if (dbt_load_main_memory(blob, (size_t)st.st_size, pie_path, &main_mod) != NM_OK) {
         free(blob);
         fprintf(stderr, "dbt_load_main_memory failed\n");
@@ -356,7 +358,8 @@ static int test_concurrent_brk_dl_sigsegv(void) {
         return 1;
     }
     typedef int (*fn3_t)(int, int, int);
-    int expected_ret = ((fn3_t)(uintptr_t)raw_fn_va)(7, 5, 2);
+    fn3_t raw_fn = NM_VOIDP_TO_FN(fn3_t, raw_fn_va);
+    int expected_ret = raw_fn(7, 5, 2);
 
     pthread_t th[MT_NTHREADS];
     mt_stress_arg_t args[MT_NTHREADS];
@@ -366,7 +369,7 @@ static int test_concurrent_brk_dl_sigsegv(void) {
         args[i].expected_ret = expected_ret;
         args[i].plugin_so = plugin_so;
         args[i].failed = 0;
-        if (pthread_create(&th[i], NULL, mt_stress_worker, &args[i]) != 0) {
+        if (pthread_create(&th[i], nullptr, mt_stress_worker, &args[i]) != 0) {
             perror("pthread_create");
             return 1;
         }
@@ -374,7 +377,7 @@ static int test_concurrent_brk_dl_sigsegv(void) {
 
     int failed = 0;
     for (int i = 0; i < MT_NTHREADS; i++) {
-        pthread_join(th[i], NULL);
+        pthread_join(th[i], nullptr);
         if (args[i].failed) failed = 1;
     }
 
@@ -414,11 +417,12 @@ static int test_exec_embedded_eexist_diag(void) {
     }
     if (pid == 0) {
         /* Occupy 0x08048000 to simulate an in-place ET_EXEC host collision */
-        void *blk = mmap((void *)0x08048000u, 4096, PROT_READ,
+        void *blk = mmap((void *)(uintptr_t)0x08048000u, 4096, PROT_READ,
                          MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (blk == MAP_FAILED) _exit(2);
-        char *argv_em[] = {(char *)"embedded_nopie", NULL};
-        int rc = newminhh_dbt_exec_embedded(blob, sz, 0, 1, argv_em, NULL);
+        char arg_name[] = "embedded_nopie";
+        char *argv_em[] = {arg_name, nullptr};
+        int rc = newminhh_dbt_exec_embedded(blob, sz, 0, 1, argv_em, nullptr);
         munmap(blk, 4096);
         _exit(rc < 0 ? 0 : 3);
     }
@@ -436,7 +440,7 @@ static int test_exec_embedded_eexist_diag(void) {
 
 /* --- 6. 0x64 (FS) prefix rejection on 0xA0..0xA3 moffs32 --- */
 static int test_fs_moffs_rejected(void) {
-    uint8_t *page = (uint8_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+    uint8_t *page = (uint8_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) {
         perror("mmap");
@@ -450,9 +454,10 @@ static int test_fs_moffs_rejected(void) {
         munmap(page, 4096);
         return 1;
     }
-    newminhh_cpu_t cpu;
-    memset(&cpu, 0, sizeof(cpu));
+    dbt_invalidate_cache_range((uint32_t)(uintptr_t)page, 4096);
+    newminhh_cpu_t cpu = {};
     int rc = newminhh_dbt_enter_at((uint32_t)(uintptr_t)page, &cpu);
+    dbt_invalidate_cache_range((uint32_t)(uintptr_t)page, 4096);
     munmap(page, 4096);
     if (rc != NM_ERR_INSN) {
         fprintf(stderr, "test_fs_moffs_rejected: expected NM_ERR_INSN (%d), got %d\n",
@@ -477,9 +482,9 @@ static long read_proc_self_vm_pages(void) {
 
 static void *leak_thread_worker(void *arg) {
     uint32_t code_va = (uint32_t)(uintptr_t)arg;
-    /* Passing cpu=NULL forces dbt_ensure_thread_tls_and_stack to allocate 16 KiB TLS + 2 MiB stack */
-    int res = newminhh_dbt_enter_at(code_va, NULL);
-    return (res == 77) ? (void *)1 : NULL;
+    /* Passing cpu=nullptr forces dbt_ensure_thread_tls_and_stack to allocate 16 KiB TLS + 2 MiB stack */
+    int res = newminhh_dbt_enter_at(code_va, nullptr);
+    return (res == 77) ? (void *)(uintptr_t)1 : nullptr;
 }
 
 static int test_leak_audit_cycles(void) {
@@ -495,7 +500,7 @@ static int test_leak_audit_cycles(void) {
                     i, newminhh_dbt_dlerror());
             return 1;
         }
-        fn2_t pfn = (fn2_t)newminhh_dbt_dlsym(h, "plugin_compute");
+        fn2_t pfn = NM_VOIDP_TO_FN(fn2_t, newminhh_dbt_dlsym(h, "plugin_compute"));
         if (!pfn || pfn(7, 5) != 47) {
             fprintf(stderr, "leak_audit: newminhh_dbt_dlsym/invoke failed at iter %d\n", i);
             newminhh_dbt_dlclose(h);
@@ -508,7 +513,7 @@ static int test_leak_audit_cycles(void) {
     }
 
     /* B. 1000 cycles of compat_dlopen("libc.so.6") + compat_dlsym_cdecl("strlen") + compat_dlclose (> 256 OUT cap) */
-    void *first_tramp = NULL;
+    void *first_tramp = nullptr;
     for (int i = 0; i < 1000; i++) {
         void *ch = compat_dlopen("libc.so.6", 0);
         if (!ch) {
@@ -536,7 +541,7 @@ static int test_leak_audit_cycles(void) {
     }
 
     /* C. 64 worker thread create/join cycles verifying 16 KiB TLS + 2 MiB guest stack munmap on exit */
-    uint8_t *page = (uint8_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+    uint8_t *page = (uint8_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (page == MAP_FAILED) {
         perror("mmap");
@@ -552,13 +557,13 @@ static int test_leak_audit_cycles(void) {
 
     /* Warm up 1 thread first so glibc pthread stack cache settles */
     pthread_t warm;
-    if (pthread_create(&warm, NULL, leak_thread_worker, page) != 0) {
+    if (pthread_create(&warm, nullptr, leak_thread_worker, page) != 0) {
         munmap(page, 4096);
         return 1;
     }
-    void *wret = NULL;
+    void *wret = nullptr;
     pthread_join(warm, &wret);
-    if (wret != (void *)1) {
+    if (wret != (void *)(uintptr_t)1) {
         munmap(page, 4096);
         return 1;
     }
@@ -566,13 +571,13 @@ static int test_leak_audit_cycles(void) {
     long pages_before = read_proc_self_vm_pages();
     for (int i = 0; i < 64; i++) {
         pthread_t th;
-        if (pthread_create(&th, NULL, leak_thread_worker, page) != 0) {
+        if (pthread_create(&th, nullptr, leak_thread_worker, page) != 0) {
             munmap(page, 4096);
             return 1;
         }
-        void *tret = NULL;
+        void *tret = nullptr;
         pthread_join(th, &tret);
-        if (tret != (void *)1) {
+        if (tret != (void *)(uintptr_t)1) {
             fprintf(stderr, "leak_audit: worker thread failed at iter %d\n", i);
             munmap(page, 4096);
             return 1;
@@ -596,7 +601,7 @@ static int test_leak_audit_cycles(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc > 1) {
+    if (argc > 1 && argv != nullptr) {
         g_i386_dir = argv[1];
     }
     if (test_sigsegv_sigign_in_child() != 0) return 1;

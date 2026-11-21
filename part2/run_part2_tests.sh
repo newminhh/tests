@@ -26,6 +26,7 @@ grep -q "^PASS test_callbacks_and_trampoline_pool$" "$LOG_FILE"
 grep -q "^PASS test_syscalls$" "$LOG_FILE"
 grep -q "^PASS test_struct_repacking$" "$LOG_FILE"
 grep -q "^PASS test_dl_and_wrappers$" "$LOG_FILE"
+grep -q "^PASS test_cstd_features$" "$LOG_FILE"
 grep -q "^ALL_PART2_TESTS_PASSED$" "$LOG_FILE"
 
 # Verify structured diagnostics were emitted on negative test paths

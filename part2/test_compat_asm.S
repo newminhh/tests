@@ -393,7 +393,7 @@ asm_cdecl_sig_handler:
     .double 2.5
 
 .bss
-.p2align 2
+.p2align 4
 .globl g_asm_atexit_seq
 g_asm_atexit_seq:
     .space 32
