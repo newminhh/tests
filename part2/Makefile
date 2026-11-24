@@ -10,14 +10,14 @@ COMPAT_DIR ?= ../../src/compat
 CFLAGS ?= -O2 -g
 CFLAGS += -std=$(CSTD) -Wall -Wextra -Wpedantic \
           -Wstrict-prototypes -Wold-style-definition -Wshadow -Wundef \
-          -Wformat=2 -fstrict-flex-arrays=3 -Werror \
+          -Wformat=2 -fstrict-flex-arrays=3 -Werror -no-pie \
           -I$(COMMON_DIR)
 
 ifeq ($(IS_CLANG),1)
   CFLAGS += -Wnullability-completeness -Wno-nullability-extension -Wno-gcc-compat -Wno-deprecated-octal-literals
 endif
 
-LDFLAGS := -L$(COMPAT_DIR) -Wl,-rpath,$(COMPAT_DIR) -lnewminhh_compat -lm -lpthread -ldl
+LDFLAGS := -L$(COMPAT_DIR) -Wl,-rpath,$(COMPAT_DIR) -Wl,-rpath,'$$ORIGIN/$(COMPAT_DIR)' -lnewminhh_compat -lm -lpthread -ldl
 
 TARGET := test_compat
 

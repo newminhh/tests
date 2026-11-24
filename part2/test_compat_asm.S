@@ -349,6 +349,55 @@ asm_test_invoke_cdecl_out_vsnprintf:
 .size asm_test_invoke_cdecl_out_vsnprintf, .-asm_test_invoke_cdecl_out_vsnprintf
 
 /*
+ * Helper: int asm_test_invoke_cdecl_out_compress2(void *tramp, void *dest, void *destLen,
+ *                                                 const void *source, uint32_t sourceLen, int level)
+ */
+.globl asm_test_invoke_cdecl_out_compress2
+.type asm_test_invoke_cdecl_out_compress2, @function
+asm_test_invoke_cdecl_out_compress2:
+    pushq   %rbx
+    movq    %rsp, %rbx
+    andq    $-16, %rsp
+    subq    $28, %rsp
+    movl    %esi, 4(%rsp)
+    movl    %edx, 8(%rsp)
+    movl    %ecx, 12(%rsp)
+    movl    %r8d, 16(%rsp)
+    movl    %r9d, 20(%rsp)
+    leal    .Lout_comp2_ret(%rip), %eax
+    movl    %eax, (%rsp)
+    jmp     *%rdi
+.Lout_comp2_ret:
+    movq    %rbx, %rsp
+    popq    %rbx
+    ret
+.size asm_test_invoke_cdecl_out_compress2, .-asm_test_invoke_cdecl_out_compress2
+
+/*
+ * Helper: int asm_test_invoke_cdecl_out_uncompress(void *tramp, void *dest, void *destLen,
+ *                                                  const void *source, uint32_t sourceLen)
+ */
+.globl asm_test_invoke_cdecl_out_uncompress
+.type asm_test_invoke_cdecl_out_uncompress, @function
+asm_test_invoke_cdecl_out_uncompress:
+    pushq   %rbx
+    movq    %rsp, %rbx
+    andq    $-16, %rsp
+    subq    $24, %rsp
+    movl    %esi, 4(%rsp)
+    movl    %edx, 8(%rsp)
+    movl    %ecx, 12(%rsp)
+    movl    %r8d, 16(%rsp)
+    leal    .Lout_uncomp_ret(%rip), %eax
+    movl    %eax, (%rsp)
+    jmp     *%rdi
+.Lout_uncomp_ret:
+    movq    %rbx, %rsp
+    popq    %rbx
+    ret
+.size asm_test_invoke_cdecl_out_uncompress, .-asm_test_invoke_cdecl_out_uncompress
+
+/*
  * cdecl ASM callee checking %esp % 16 == 12 at function entry
  * (making [esp+4] 16-byte aligned per i386 SysV ABI).
  */

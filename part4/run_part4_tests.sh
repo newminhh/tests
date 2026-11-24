@@ -48,7 +48,7 @@ run_guest_tests() {
     local i386_dir="${REPO_ROOT}/tests/corpus/build/i386"
     local x32_dir="${REPO_ROOT}/tests/corpus/build/x32"
 
-    echo "=== [1/6] Building and installing libnewminhh_dbt.so & newminhh-run (0 warnings) ==="
+    echo "=== [1/7] Building and installing libnewminhh_dbt.so & newminhh-run (0 warnings) ==="
     local build_log
     build_log="$(mktemp)"
     trap 'rm -f "${build_log:-}"' EXIT
@@ -64,8 +64,11 @@ run_guest_tests() {
         echo "[FAIL] newminhh-run is not linked high at 0x70000000" >&2
         exit 1
     }
+    if command -v newminhh-lookup-gen >/dev/null 2>&1; then
+        newminhh-lookup-gen --system --quiet || true
+    fi
 
-    echo "=== [2/6] Running all 13 unpatched i386 CLI fixtures (C01-C11) under newminhh-run ==="
+    echo "=== [2/7] Running all 13 unpatched i386 CLI fixtures (C01-C11) under newminhh-run ==="
     pushd "${i386_dir}" >/dev/null
     for bin in "${CLI_LIST[@]}"; do
         local out_dbt out_ref
@@ -103,7 +106,7 @@ run_guest_tests() {
     }
     echo "  [PASS] bench_workload (--compute & --libc-heavy): ${bc_dbt}"
 
-    echo "=== [3/6] Testing newminhh-run --so direct invocation ==="
+    echo "=== [3/7] Testing newminhh-run --so direct invocation ==="
     set +e
     timeout 10 newminhh-run --so ./libplugin_stripped.so plugin_compute 7 5
     local so_rc=$?
@@ -116,7 +119,7 @@ run_guest_tests() {
     echo "  [PASS] newminhh-run --so libplugin_stripped.so plugin_compute 7 5 -> 47"
     popd >/dev/null
 
-    echo "=== [4/6] Running bidirectional .so host driver (S01-S03 + N09) via libnewminhh_dbt.so ==="
+    echo "=== [4/7] Running bidirectional .so host driver (S01-S03 + N09) via libnewminhh_dbt.so ==="
     local drv_out drv_ref
     drv_out="$(timeout 10 "${x32_dir}/x32_so_host_driver" --dbt "${i386_dir}")"
     drv_ref="$("${x32_dir}/x32_so_host_driver" "${x32_dir}")"
@@ -128,7 +131,7 @@ run_guest_tests() {
     fi
     echo "  [PASS] x32_so_host_driver --dbt: ${drv_out}"
 
-    echo "=== [5/6] Verifying negative/malformed/unsupported inputs (N01-N09) fail loudly ==="
+    echo "=== [5/7] Verifying negative/malformed/unsupported inputs (N01-N09) fail loudly ==="
     for neg in "${NEG_LIST[@]}"; do
         local npath="${i386_dir}/negatives/${neg}"
         local nerr
@@ -158,7 +161,7 @@ run_guest_tests() {
     fi
     echo "  [PASS] N09 neg_dlsym_missing (exit=${n09_rc})"
 
-    echo "=== [6/6] Running Part 4 hybrid fallback API & MT stress tests ==="
+    echo "=== [6/7] Running Part 4 hybrid fallback API & MT stress tests ==="
     make -C "${part4_dir}" clean all 2>&1 | tee -a "${build_log}"
     if grep -E "warning:" "${build_log}"; then
         echo "[FAIL] Compiler warnings detected in tests/part4 build!" >&2
@@ -166,6 +169,19 @@ run_guest_tests() {
     fi
     timeout 10 "${part4_dir}/test_part4_api" "${i386_dir}/cli_switch_jumptable_pie"
     timeout 30 "${part4_dir}/test_part4_mt_stress" "${i386_dir}"
+
+    echo "=== [7/7] Running Part 4 native libz round-trip test under newminhh-run ==="
+    local z_bin="${part4_dir}/test_part4_native_libz"
+    if [[ ! -x "${z_bin}" ]]; then
+        z_bin="${part4_dir}/guest_native_libz"
+    fi
+    local z_out
+    z_out="$(timeout 10 newminhh-run "${z_bin}")"
+    echo "${z_out}" | grep -q "ZLIB_NATIVE_ROUNDTRIP_OK" || {
+        echo "[FAIL] test_part4_native_libz unexpected output: ${z_out}" >&2
+        exit 1
+    }
+    echo "  [PASS] test_part4_native_libz: ${z_out}"
 
     echo "=== ALL PART 4 VERIFICATION CHECKS PASSED ==="
 }
@@ -180,6 +196,10 @@ if [[ ! -x "${VM_EXEC}" ]]; then
     echo "[ERROR] ${VM_EXEC} not found or not executable" >&2
     exit 1
 fi
+
+echo "=== Building host i386 native-libz guest fixture ==="
+make -C "${REPO_ROOT}/tests/part4" CC=gcc i386
+trap 'rm -f "${REPO_ROOT}/tests/part4/test_part4_native_libz" "${REPO_ROOT}/tests/part4/guest_native_libz"' EXIT
 
 echo "=== Syncing src/common, src/dbt, and tests/part4 to newminhh-x32 VM ==="
 "${VM_EXEC}" --sync "${REPO_ROOT}/src/common" /root/newminhh/src/common

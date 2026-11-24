@@ -112,9 +112,20 @@ def inspect_shared_library(
 
     paths = sorted({v["path"].split(" ")[0] for v in matches})
     if require_x32_dir:
-        if not any(("x86_64-linux-gnux32" in p or "/libx32" in p) for p in paths):
+        # Accept both multiarch x32 directories and pure-x32 /usr/lib (/lib) on musl/Arch distros
+        # by verifying ELF32 EM_X86_64 (EI_CLASS=1, e_machine=62) when a file exists on disk.
+        def _is_x32_lib(p: str) -> bool:
+            if "x86_64-linux-gnux32" in p or "/libx32" in p:
+                return True
+            try:
+                with open(p, "rb") as f:
+                    hdr = f.read(20)
+                return len(hdr) >= 20 and hdr[:4] == b"\x7fELF" and hdr[4] == 1 and int.from_bytes(hdr[18:20], "little") == 62
+            except OSError:
+                return False
+        if not any(_is_x32_lib(p) for p in paths):
             raise BenchFailure(
-                f"PID {pid}: '{lib_basename}' is not from x32 library directory: {paths}"
+                f"PID {pid}: '{lib_basename}' is not an x32 ELF32/EM_X86_64 library: {paths}"
             )
 
     ro_rx_vmas = [v for v in matches if v["perms"] in ("r--p", "r-xp")]

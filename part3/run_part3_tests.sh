@@ -71,8 +71,8 @@ verify_elf_x32() {
     fi
     if [ "${is_exec}" = "1" ]; then
         phdr="$(readelf -l "${path}")"
-        if ! grep -q '/libx32/ld-linux-x32.so.2' <<<"${phdr}"; then
-            fail "readelf -l (${mode}) $(basename "${path}"): missing PT_INTERP /libx32/ld-linux-x32.so.2"
+        if ! grep -qE '(/libx32/ld-linux-x32\.so\.2|/lib/ld-musl-x32\.so\.1)' <<<"${phdr}"; then
+            fail "readelf -l (${mode}) $(basename "${path}"): missing PT_INTERP (/libx32/ld-linux-x32.so.2 or /lib/ld-musl-x32.so.1)"
             return 1
         fi
     fi
@@ -178,6 +178,42 @@ else
     fail "mem_ijmp: non-PLT jmp *(%eax) was misclassified as PLT (rc=${mem_rc}, diag=${mem_diag})"
 fi
 
+echo "=== Stage 1c: Level 1 regressions fixture (test_l1_regressions.c) ==="
+L1_REG_SRC="${SCRIPT_DIR}/test_l1_regressions.c"
+[ -f "${L1_REG_SRC}" ] || { echo "ERROR: missing ${L1_REG_SRC}" >&2; exit 1; }
+gcc -m32 -O2 "${L1_REG_SRC}" -o "${WORK_DIR}/test_l1_regressions.i386"
+
+# Patch with --no-hybrid-fallback (static)
+if "${PATCHER}" --no-hybrid-fallback "${WORK_DIR}/test_l1_regressions.i386" -o "${WORK_DIR}/static/test_l1_regressions"; then
+    verify_elf_x32 "${WORK_DIR}/static/test_l1_regressions" "static" "1"
+    # Verify --no-hybrid-fallback omits .newminhh.orig section
+    if readelf -S "${WORK_DIR}/static/test_l1_regressions" | grep -q '\.newminhh\.orig'; then
+        fail "test_l1_regressions: unexpected .newminhh.orig under --no-hybrid-fallback"
+    else
+        pass "test_l1_regressions: cleanly omitted .newminhh.orig under --no-hybrid-fallback"
+    fi
+else
+    fail "newminhh-patch --no-hybrid-fallback failed on test_l1_regressions"
+fi
+
+# Patch with --hybrid-fallback
+if "${PATCHER}" --hybrid-fallback "${WORK_DIR}/test_l1_regressions.i386" -o "${WORK_DIR}/hybrid/test_l1_regressions"; then
+    verify_elf_x32 "${WORK_DIR}/hybrid/test_l1_regressions" "hybrid" "1"
+else
+    fail "newminhh-patch --hybrid-fallback failed on test_l1_regressions"
+fi
+
+# Verify --target-interp /lib/ld-musl-x32.so.1
+if "${PATCHER}" --target-interp /lib/ld-musl-x32.so.1 "${WORK_DIR}/test_l1_regressions.i386" -o "${WORK_DIR}/test_musl_interp.x32"; then
+    if readelf -l "${WORK_DIR}/test_musl_interp.x32" | grep -q '/lib/ld-musl-x32\.so\.1'; then
+        pass "test_l1_regressions: --target-interp /lib/ld-musl-x32.so.1 set cleanly"
+    else
+        fail "test_l1_regressions: missing /lib/ld-musl-x32.so.1 in PT_INTERP"
+    fi
+else
+    fail "newminhh-patch --target-interp /lib/ld-musl-x32.so.1 failed"
+fi
+
 echo "=== Stage 2: --use-r2 & --use-ghidra stripped binary RE verification ==="
 if "${PATCHER}" --use-r2 --no-hybrid-fallback "${I386_DIR}/cli_stripped" -o "${WORK_DIR}/re_tools/cli_stripped_r2"; then
     verify_elf_x32 "${WORK_DIR}/re_tools/cli_stripped_r2" "static" "1"
@@ -233,6 +269,15 @@ for mode in static hybrid; do
         fi
     done
 
+    # Level 1 regression test check
+    out_reg="$("${RDIR}/${mode}/test_l1_regressions" 2>&1)"
+    rc_reg=$?
+    if [ "${rc_reg}" -eq 0 ] && grep -qF "L1_REGRESSIONS_OK" <<<"${out_reg}"; then
+        echo "VM_PASS ${mode}/test_l1_regressions"
+    else
+        echo "VM_FAIL ${mode}/test_l1_regressions rc=${rc_reg} GOT=[${out_reg}]"
+    fi
+
     # Environment variable check
     out_env="$(NEWMINHH_TEST_ENV="part3_env_ok" "${RDIR}/${mode}/cli_libc_pie" 2>&1)"
     if grep -qF "env=part3_env_ok" <<<"${out_env}"; then
@@ -266,10 +311,8 @@ for mode in static hybrid; do
     fi
 
     # N09 neg_dlsym_missing
-    set +e
     out_n09="$("${RDIR}/${mode}/neg_dlsym_missing" 2>&1)"
     rc_n09=$?
-    set -e
     if [ "${rc_n09}" -ne 0 ] && grep -qF "N09_EXPECTED_FAIL" <<<"${out_n09}"; then
         echo "VM_PASS ${mode}/neg_dlsym_missing"
     else

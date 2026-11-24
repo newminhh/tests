@@ -7,7 +7,6 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdbit.h>
 #include <stdckdint.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,7 +19,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../../src/common/newminhh_cstd.h"
 #include "../../src/common/newminhh_abi.h"
+#include "../../src/common/newminhh_lookup.h"
 #include "../../src/common/newminhh_log.h"
 
 /* Assembly callees & helpers in test_compat_asm.S */
@@ -47,7 +48,33 @@ extern int asm_test_invoke_cdecl_out_snprintf(void *tramp, char *buf, uint32_t s
                                               const char *fmt, int32_t i, double d, const char *s);
 extern int asm_test_invoke_cdecl_out_vsnprintf(void *tramp, char *buf, uint32_t sz,
                                                const char *fmt, const uint32_t *va_words);
+extern int asm_test_invoke_cdecl_out_compress2(void *tramp, void *dest, void *destLen,
+                                               const void *source, uint32_t sourceLen, int level);
+extern int asm_test_invoke_cdecl_out_uncompress(void *tramp, void *dest, void *destLen,
+                                                const void *source, uint32_t sourceLen);
 extern uint32_t asm_read_gs_u32(uint32_t offset);
+
+typedef struct {
+    int32_t a;
+    int32_t b;
+} nm_test_pair_t;
+
+typedef struct {
+    int32_t a;
+    int32_t b;
+    int32_t c;
+    int32_t d;
+} nm_test_quad_t;
+
+static nm_test_pair_t target_sret_pair(int32_t x, int32_t y) {
+    nm_test_pair_t p = {.a = x * 3, .b = y * 5};
+    return p;
+}
+
+static nm_test_quad_t target_sret_quad(int32_t x, int32_t y, int32_t z, int32_t w) {
+    nm_test_quad_t q = {.a = x + 10, .b = y + 20, .c = z + 30, .d = w + 40};
+    return q;
+}
 
 alignas(16) extern char g_asm_atexit_seq[32];
 extern int g_asm_atexit_pos;
@@ -236,7 +263,7 @@ static void test_outgoing_marshaling(void) {
     assert(newminhh_compat_lookup_wrapper("strtoull", &strtoull_ent) == NM_OK);
     void *out_strtoull = newminhh_alloc_out_trampoline(strtoull_ent.wrapper_fn, &strtoull_ent.sig);
     assert(out_strtoull != nullptr);
-    char *u64_end = nullptr;
+    static char *u64_end = nullptr;
     uint64_t u64_val = asm_test_invoke_cdecl_out_strtoull(out_strtoull, "0x123456789ABCDEF0", &u64_end, 16);
     assert(u64_val == 0x123456789ABCDEF0ULL && u64_end != nullptr && *u64_end == '\0');
 
@@ -253,6 +280,53 @@ static void test_outgoing_marshaling(void) {
     assert(out_sqrtf != nullptr);
     float sqrtf_val = asm_test_invoke_cdecl_out_1f32(out_sqrtf, 9.0f);
     assert(fabsf(sqrtf_val - 3.0f) < 1e-6f);
+
+    /* 7. sret 8-byte (pair) and 16-byte (quad) integer aggregate returns */
+    nm_fn_sig_t s_pair = {
+        .ret_kind = NM_RET_VOID,
+        .nargs = 2,
+        .is_variadic = 0,
+        .abi_ext = NM_SIG_EXT_MAKE_SRET(sizeof(nm_test_pair_t)),
+        .arg_kinds = {NM_ARG_I32, NM_ARG_I32}
+    };
+    static nm_test_pair_t out_pair = {0};
+    uint32_t a_pair[3] = {
+        (uint32_t)(uintptr_t)&out_pair,
+        7,
+        11
+    };
+    uint64_t r_pair = newminhh_call_x32_sig(NM_FN_TO_VOIDP(target_sret_pair), &s_pair, a_pair, nullptr);
+    assert((uint32_t)r_pair == (uint32_t)(uintptr_t)&out_pair);
+    assert(out_pair.a == 21 && out_pair.b == 55);
+
+    memset(&out_pair, 0, sizeof(out_pair));
+    uint64_t r_pair_cdecl = newminhh_call_x32_cdecl(NM_FN_TO_VOIDP(target_sret_pair), &s_pair, a_pair);
+    assert((uint32_t)r_pair_cdecl == (uint32_t)(uintptr_t)&out_pair);
+    assert(out_pair.a == 21 && out_pair.b == 55);
+
+    nm_fn_sig_t s_quad = {
+        .ret_kind = NM_RET_VOID,
+        .nargs = 4,
+        .is_variadic = 0,
+        .abi_ext = NM_SIG_EXT_MAKE_SRET(sizeof(nm_test_quad_t)),
+        .arg_kinds = {NM_ARG_I32, NM_ARG_I32, NM_ARG_I32, NM_ARG_I32}
+    };
+    static nm_test_quad_t out_quad = {0};
+    uint32_t a_quad[5] = {
+        (uint32_t)(uintptr_t)&out_quad,
+        1,
+        2,
+        3,
+        4
+    };
+    uint64_t r_quad = newminhh_call_x32_sig(NM_FN_TO_VOIDP(target_sret_quad), &s_quad, a_quad, nullptr);
+    assert((uint32_t)r_quad == (uint32_t)(uintptr_t)&out_quad);
+    assert(out_quad.a == 11 && out_quad.b == 22 && out_quad.c == 33 && out_quad.d == 44);
+
+    memset(&out_quad, 0, sizeof(out_quad));
+    uint64_t r_quad_cdecl = newminhh_call_x32_cdecl(NM_FN_TO_VOIDP(target_sret_quad), &s_quad, a_quad);
+    assert((uint32_t)r_quad_cdecl == (uint32_t)(uintptr_t)&out_quad);
+    assert(out_quad.a == 11 && out_quad.b == 22 && out_quad.c == 33 && out_quad.d == 44);
 
     printf("PASS test_outgoing_marshaling\n");
 }
@@ -316,8 +390,8 @@ static void test_incoming_bridge(void) {
     init_fn_t init_w = NM_VOIDP_TO_FN(init_fn_t, newminhh_wrap_init_array_fn(
         (uint32_t)(uintptr_t)asm_cdecl_init_fn, NM_CB_MODE_NATIVE_CDECL));
     assert(init_w != nullptr);
-    char *fake_argv[2] = {"prog", nullptr};
-    char *fake_envp[1] = {nullptr};
+    static char *fake_argv[2] = {"prog", nullptr};
+    static char *fake_envp[1] = {nullptr};
     init_w(1, fake_argv, fake_envp);
     assert(g_asm_init_argc == 1);
     assert(g_asm_init_argv == (uint32_t)(uintptr_t)fake_argv);
@@ -353,35 +427,36 @@ static void test_incoming_bridge(void) {
 
 static void test_callbacks_and_trampoline_pool(void) {
     /* 1. qsort + bsearch with real cdecl ASM comparator */
-    int32_t arr[7] = {50, -10, 42, 7, 99, 0, 15};
+    static int32_t arr[7] = {50, -10, 42, 7, 99, 0, 15};
     compat_qsort(arr, 7, sizeof(int32_t), (uint32_t)(uintptr_t)asm_cdecl_qsort_cmp_i32);
     int32_t expected[7] = {-10, 0, 7, 15, 42, 50, 99};
     assert(memcmp(arr, expected, sizeof(arr)) == 0);
 
-    int32_t key = 42;
+    static int32_t key = 42;
     int32_t *found = (int32_t *)compat_bsearch(&key, arr, 7, sizeof(int32_t),
                                                (uint32_t)(uintptr_t)asm_cdecl_qsort_cmp_i32);
     assert(found == &arr[4] && *found == 42);
 
-    int32_t missing_key = 1234;
+    static int32_t missing_key = 1234;
     assert(compat_bsearch(&missing_key, arr, 7, sizeof(int32_t),
                           (uint32_t)(uintptr_t)asm_cdecl_qsort_cmp_i32) == nullptr);
 
     /* 2. pthread_create with GS base propagation + 24-byte i386 mutex */
-    uint32_t fake_tls[4] = {0x11110000u, 0x00002222u, 0, 0};
-    newminhh_user_desc32_t udesc = {
+    static uint32_t fake_tls[4] = {0x11110000u, 0x00002222u, 0, 0};
+    static newminhh_user_desc32_t udesc = {
         .entry_number = (uint32_t)-1,
-        .base_addr = (uint32_t)(uintptr_t)fake_tls,
+        .base_addr = 0,
         .limit = 0xFFFFFu,
         .flags = 0x51u
     };
+    udesc.base_addr = (uint32_t)(uintptr_t)fake_tls;
     assert(newminhh_compat_syscall(243 /* set_thread_area */,
                                    (uint32_t)(uintptr_t)&udesc, 0, 0, 0, 0, 0) == 0);
     assert(udesc.entry_number >= 6 && udesc.entry_number <= 8);
 
     uint32_t th = 0;
-    uint32_t th_out[2] = {0, 0};
-    uint8_t i386_mutex[24] = {0}; /* 24B i386 pthread_mutex_t size check */
+    static uint32_t th_out[2] = {0, 0};
+    static uint8_t i386_mutex[24] = {0}; /* 24B i386 pthread_mutex_t size check */
     assert(compat_pthread_mutex_lock(i386_mutex) == 0);
     assert(compat_pthread_mutex_unlock(i386_mutex) == 0);
     assert(compat_pthread_mutex_destroy(i386_mutex) == 0);
@@ -456,12 +531,12 @@ static void test_syscalls(void) {
     assert(pid == (int32_t)getpid());
 
     /* 2. pipe + write + read + close */
-    int fds[2] = {-1, -1};
+    static int fds[2] = {-1, -1};
     assert(newminhh_compat_syscall(331 /* pipe2 */, (uint32_t)(uintptr_t)fds, 0, 0, 0, 0, 0) == 0);
     const char *wmsg = "part2-syscall-ok";
     assert(newminhh_compat_syscall(4 /* write */, (uint32_t)fds[1],
                                    (uint32_t)(uintptr_t)wmsg, (uint32_t)strlen(wmsg), 0, 0, 0) == (int32_t)strlen(wmsg));
-    char rbuf[32] = {0};
+    static char rbuf[32] = {0};
     assert(newminhh_compat_syscall(3 /* read */, (uint32_t)fds[0],
                                    (uint32_t)(uintptr_t)rbuf, sizeof(rbuf) - 1, 0, 0, 0) == (int32_t)strlen(wmsg));
     assert(strcmp(rbuf, wmsg) == 0);
@@ -469,7 +544,7 @@ static void test_syscalls(void) {
     assert(newminhh_compat_syscall(6 /* close */, (uint32_t)fds[1], 0, 0, 0, 0, 0) == 0);
 
     /* 3. mmap2 (pgoffset << 12) + munmap */
-    char tmp_path[128];
+    static char tmp_path[128];
     snprintf(tmp_path, sizeof(tmp_path), "/tmp/newminhh_p2_mmap_%d.bin", (int)getpid());
     int fd = open(tmp_path, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
     assert(fd >= 0);
@@ -479,8 +554,14 @@ static void test_syscalls(void) {
     assert(write(fd, page0, sizeof(page0)) == sizeof(page0));
     assert(write(fd, page1, sizeof(page1)) == sizeof(page1));
 
+    int mmap_flags = MAP_PRIVATE;
+#if defined(__x86_64__) && !defined(__ILP32__)
+#ifdef MAP_32BIT
+    mmap_flags |= MAP_32BIT;
+#endif
+#endif
     int32_t map_ret = newminhh_compat_syscall(192 /* mmap2 */, 0, 4096,
-                                              PROT_READ, MAP_PRIVATE,
+                                              PROT_READ, (uint32_t)mmap_flags,
                                               (uint32_t)fd, 1 /* pgoffset=1 -> byte 4096 */);
     assert((uint32_t)map_ret < 0xfffff000u);
     const uint8_t *mapped = (const uint8_t *)(uintptr_t)(uint32_t)map_ret;
@@ -489,13 +570,13 @@ static void test_syscalls(void) {
     close(fd);
 
     /* 4. uname */
-    struct utsname uts;
+    static struct utsname uts;
     memset(&uts, 0, sizeof(uts));
     assert(newminhh_compat_syscall(122 /* uname */, (uint32_t)(uintptr_t)&uts, 0, 0, 0, 0, 0) == 0);
     assert(strcmp(uts.sysname, "Linux") == 0);
 
     /* 5. stat64 + stat32 + clock_gettime + getrlimit */
-    newminhh_stat64_t st64;
+    static newminhh_stat64_t st64;
     memset(&st64, 0, sizeof(st64));
     assert(newminhh_compat_syscall(195 /* stat64 */, (uint32_t)(uintptr_t)tmp_path,
                                    (uint32_t)(uintptr_t)&st64, 0, 0, 0, 0) == 0);
@@ -503,30 +584,31 @@ static void test_syscalls(void) {
     assert(S_ISREG(st64.st_mode));
     unlink(tmp_path);
 
-    newminhh_timespec32_t ts32 = {0, -1};
+    static newminhh_timespec32_t ts32 = {0, -1};
     assert(newminhh_compat_syscall(265 /* clock_gettime */, CLOCK_MONOTONIC,
                                    (uint32_t)(uintptr_t)&ts32, 0, 0, 0, 0) == 0);
     assert(ts32.tv_nsec >= 0);
 
-    newminhh_timespec64_t32_t ts64 = {0, -1, 0};
+    static newminhh_timespec64_t32_t ts64 = {0, -1, 0};
     assert(newminhh_compat_syscall(403 /* clock_gettime64 */, CLOCK_MONOTONIC,
                                    (uint32_t)(uintptr_t)&ts64, 0, 0, 0, 0) == 0);
     assert(ts64.tv_nsec >= 0);
 
-    newminhh_rlimit32_t rl32 = {0, 0};
+    static newminhh_rlimit32_t rl32 = {0, 0};
     assert(newminhh_compat_syscall(191 /* ugetrlimit */, RLIMIT_NOFILE,
                                    (uint32_t)(uintptr_t)&rl32, 0, 0, 0, 0) == 0);
     assert(rl32.rlim_cur > 0 && rl32.rlim_cur <= rl32.rlim_max);
 
     /* 6. set_thread_area -> arch_prctl(ARCH_SET_GS) + %gs:0 read + cpu state */
-    uint32_t tls_mem[4] = {0xCAFE0001u, 0xCAFE0002u, 0, 0};
-    newminhh_user_desc32_t desc = {
+    static uint32_t tls_mem[4] = {0xCAFE0001u, 0xCAFE0002u, 0, 0};
+    static newminhh_user_desc32_t desc = {
         .entry_number = 6,
-        .base_addr = (uint32_t)(uintptr_t)tls_mem,
+        .base_addr = 0,
         .limit = 0xFFFFFu,
         .flags = 0x51u
     };
-    newminhh_cpu_t cpu;
+    desc.base_addr = (uint32_t)(uintptr_t)tls_mem;
+    static newminhh_cpu_t cpu;
     memset(&cpu, 0, sizeof(cpu));
     cpu.gpr[NM_REG_EAX] = 243; /* set_thread_area */
     cpu.gpr[NM_REG_EBX] = (uint32_t)(uintptr_t)&desc;
@@ -684,7 +766,7 @@ static void test_dl_and_wrappers(void) {
     void *tramp_snp_mode = compat_dlsym(h_cdecl, "snprintf");
     assert(tramp_snp_mode != nullptr);
     assert(tramp_snp_mode != NM_FN_TO_VOIDP(compat_snprintf_cdecl));
-    char snp_buf1[64] = {0};
+    static char snp_buf1[64] = {0};
     int snp_len1 = asm_test_invoke_cdecl_out_snprintf(tramp_snp_mode, snp_buf1, sizeof(snp_buf1),
                                                       "%d:%.2f:%s", -42, 6.25, "cdecl");
     assert(snp_len1 == 14 && strcmp(snp_buf1, "-42:6.25:cdecl") == 0);
@@ -697,14 +779,14 @@ static void test_dl_and_wrappers(void) {
 
     void *cdecl_snp = compat_dlsym_cdecl(h_libc_d, "snprintf");
     assert(cdecl_snp != nullptr && cdecl_snp != NM_FN_TO_VOIDP(compat_snprintf_cdecl));
-    char snp_buf2[64] = {0};
+    static char snp_buf2[64] = {0};
     int snp_len2 = asm_test_invoke_cdecl_out_snprintf(cdecl_snp, snp_buf2, sizeof(snp_buf2),
                                                       "%d:%.2f:%s", 77, 1.5, "ok");
     assert(snp_len2 == 10 && strcmp(snp_buf2, "77:1.50:ok") == 0);
 
     void *cdecl_strtoull = compat_dlsym_cdecl(h_libc_d, "strtoull");
     assert(cdecl_strtoull != nullptr);
-    char *dl_u64_end = nullptr;
+    static char *dl_u64_end = nullptr;
     uint64_t dl_u64 = asm_test_invoke_cdecl_out_strtoull(cdecl_strtoull, "0xFEDCBA9876543210", &dl_u64_end, 16);
     assert(dl_u64 == 0xFEDCBA9876543210ULL && dl_u64_end != nullptr && *dl_u64_end == '\0');
 
@@ -719,7 +801,7 @@ static void test_dl_and_wrappers(void) {
     assert(ent.wrapper_fn == NM_FN_TO_VOIDP(compat_snprintf_cdecl));
 
     /* 7. Minimal i386 ELF detection + DL backend delegation */
-    char fake_i386_so[128];
+    static char fake_i386_so[128];
     snprintf(fake_i386_so, sizeof(fake_i386_so), "/tmp/newminhh_fake_i386_%d.so", (int)getpid());
     int fd = open(fake_i386_so, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
     assert(fd >= 0);
@@ -762,10 +844,10 @@ static void test_dl_and_wrappers(void) {
     newminhh_get_stdio_streams(&f_in, &f_out, &f_err);
     assert(f_in == stdin && f_out == stdout && f_err == stderr);
 
-    char fmt_out[128] = {0};
+    static char fmt_out[128] = {0};
     const char *fmt_str = "%d:%lld:%.2f:%s";
     const char *tag = "ok";
-    uint32_t cdecl_fmt_args[10];
+    static uint32_t cdecl_fmt_args[10];
     int fp_pos = 0;
     cdecl_fmt_args[fp_pos++] = (uint32_t)(uintptr_t)fmt_out;
     cdecl_fmt_args[fp_pos++] = (uint32_t)sizeof(fmt_out);
@@ -778,19 +860,19 @@ static void test_dl_and_wrappers(void) {
     assert(flen > 0 && strcmp(fmt_out, "-7:4294967297:3.25:ok") == 0);
 
     /* compat_vsnprintf & compat_vsprintf with uint32_t i386-style va_list buffer */
-    char vfmt_out[128] = {0};
+    static char vfmt_out[128] = {0};
     const uint32_t *i386_va_words = &cdecl_fmt_args[3];
     int vlen = compat_vsnprintf(vfmt_out, (uint32_t)sizeof(vfmt_out), fmt_str,
                                 (void *)(uintptr_t)i386_va_words);
     assert(vlen == flen && strcmp(vfmt_out, "-7:4294967297:3.25:ok") == 0);
 
-    char vs_out[128] = {0};
+    static char vs_out[128] = {0};
     int vslen = compat_vsprintf(vs_out, fmt_str, (void *)(uintptr_t)i386_va_words);
     assert(vslen == flen && strcmp(vs_out, "-7:4294967297:3.25:ok") == 0);
 
     void *cdecl_vsnp = compat_dlsym_cdecl(h_libc_d, "vsnprintf");
     assert(cdecl_vsnp != nullptr);
-    char vsnp_asm_out[128] = {0};
+    static char vsnp_asm_out[128] = {0};
     int vsnp_asm_len = asm_test_invoke_cdecl_out_vsnprintf(cdecl_vsnp, vsnp_asm_out,
                                                            (uint32_t)sizeof(vsnp_asm_out),
                                                            fmt_str, i386_va_words);
@@ -815,18 +897,18 @@ static void test_cstd_features(void) {
     assert(!ckd_mul(&ckd_res, 10u, 30u) && ckd_res == 300u);
     assert(ckd_mul(&ckd_res, 0x80000000u, 2u));
 
-    /* 2. <stdbit.h> bit operations (N3022) */
-    assert(!stdc_has_single_bit(0u));
-    assert(stdc_has_single_bit(1u));
-    assert(stdc_has_single_bit(2u));
-    assert(!stdc_has_single_bit(3u));
-    assert(stdc_has_single_bit(4096u));
-    assert(stdc_bit_ceil(0u) == 1u);
-    assert(stdc_bit_ceil(1u) == 1u);
-    assert(stdc_bit_ceil(2u) == 2u);
-    assert(stdc_bit_ceil(3u) == 4u);
-    assert(stdc_bit_ceil(4095u) == 4096u);
-    assert(stdc_bit_ceil(4096u) == 4096u);
+    /* 2. <stdbit.h> bit operations (N3022) / portable NM_HAS_SINGLE_BIT */
+    assert(!NM_HAS_SINGLE_BIT(0u));
+    assert(NM_HAS_SINGLE_BIT(1u));
+    assert(NM_HAS_SINGLE_BIT(2u));
+    assert(!NM_HAS_SINGLE_BIT(3u));
+    assert(NM_HAS_SINGLE_BIT(4096u));
+    assert(NM_BIT_CEIL(0u) == 1u);
+    assert(NM_BIT_CEIL(1u) == 1u);
+    assert(NM_BIT_CEIL(2u) == 2u);
+    assert(NM_BIT_CEIL(3u) == 4u);
+    assert(NM_BIT_CEIL(4095u) == 4096u);
+    assert(NM_BIT_CEIL(4096u) == 4096u);
 
     /* 3. NM_COUNTOF decay-safe compile-time check */
     int test_arr[7] = {};
@@ -936,8 +1018,8 @@ static void test_cstd_features(void) {
     assert(ts32.tv_nsec >= 0 && ts32.tv_nsec < 1000000000);
 
     /* 15. C23 fixed-width and binary printf formatting (%b, %B, %w64, %wf64) */
-    char c23_fmt_buf[128] = {};
-    uint32_t c23_args[16] = {};
+    static char c23_fmt_buf[128] = {};
+    static uint32_t c23_args[16] = {};
     int c23_pos = 0;
     const char *c23_fmt = "%b %B %w8d %w16x %w32u %w64d %wf8d %wf64d %d";
     c23_args[c23_pos++] = (uint32_t)(uintptr_t)c23_fmt_buf;
@@ -979,6 +1061,112 @@ static void test_cstd_features(void) {
     printf("PASS test_cstd_features\n");
 }
 
+static void test_lookup_runtime(void) {
+    /* 1. Missing-cache single-warning fallback test */
+    char tgt[256] = {0};
+    int cls = newminhh_lookup_classify_lib("libc.so.6", tgt, sizeof(tgt));
+    assert(cls == NM_LK_COMPAT);
+    assert(strcmp(tgt, "libc.so.6") == 0 || strcmp(tgt, "libnewminhh_compat.so") == 0);
+
+    cls = newminhh_lookup_classify_lib("libc.musl-x32.so.1", tgt, sizeof(tgt));
+    assert(cls == NM_LK_COMPAT);
+    assert(strcmp(tgt, "libc.musl-x32.so.1") == 0 || strcmp(tgt, "libnewminhh_compat.so") == 0);
+
+    cls = newminhh_lookup_classify_lib("nonexistent_unknown_lib.so", tgt, sizeof(tgt));
+    assert(cls == NM_LK_NONE);
+
+    nm_sym_entry_t ent;
+    assert(newminhh_lookup_resolve("libc.so.6", "strlen", nullptr, &ent, nullptr) == NM_OK);
+    assert(ent.wrapper_fn != nullptr);
+
+    /* 2. R_386_COPY slot fixup */
+    uint32_t env_slot = 0;
+    uint32_t optarg_slot = 0;
+    int32_t optind_slot = 0;
+    int32_t opterr_slot = 0;
+    int32_t optopt_slot = 0;
+    newminhh_compat_fixup_copy_data(&env_slot, &optarg_slot, &optind_slot, &opterr_slot, &optopt_slot);
+    assert(env_slot == (uint32_t)(uintptr_t)environ);
+    assert(optarg_slot == (uint32_t)(uintptr_t)optarg);
+    assert(optind_slot == optind);
+    assert(opterr_slot == opterr);
+    assert(optopt_slot == optopt);
+    newminhh_compat_fixup_copy_data(nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    /* 3. Sigaction round-trip repacking */
+    newminhh_sigaction32_t act32 = {0};
+    act32.sa_handler_va = (uint32_t)(uintptr_t)SIG_IGN;
+    act32.sa_flags = SA_RESTART;
+    act32.sa_restorer_va = 0x12345678;
+    act32.sa_mask[0] = (1u << (SIGINT - 1)) | (1u << (SIGTERM - 1));
+    act32.sa_mask[1] = 0;
+
+    newminhh_sigaction32_t oldact32 = {0};
+    assert(compat_sigaction(SIGUSR2, &act32, &oldact32) == 0);
+
+    newminhh_sigaction32_t query32 = {0};
+    assert(compat_sigaction(SIGUSR2, nullptr, &query32) == 0);
+    assert(query32.sa_handler_va == (uint32_t)(uintptr_t)SIG_IGN);
+    assert((query32.sa_flags & SA_RESTART) != 0);
+    assert((query32.sa_mask[0] & (1u << (SIGINT - 1))) != 0);
+    assert((query32.sa_mask[0] & (1u << (SIGTERM - 1))) != 0);
+
+    /* Restore previous */
+    assert(compat_sigaction(SIGUSR2, &oldact32, nullptr) == 0);
+
+    /* 4. When lookup_table.txt is available: libz.so.1 + compress2/uncompress + UNTYPED refusal */
+    const char *tbl = getenv("NEWMINHH_LOOKUP_TABLE");
+    if (!tbl) tbl = NM_LOOKUP_DEFAULT_CACHE;
+    if (access(tbl, R_OK) == 0) {
+        nm_sym_entry_t z_ent;
+        int r_res = newminhh_lookup_resolve("libz.so.1", "compress2", nullptr, &z_ent, nullptr);
+        assert(r_res == NM_OK);
+        assert(z_ent.wrapper_fn != nullptr);
+
+        /* forbidden ABI refusal */
+        nm_sym_entry_t bad_ent;
+        int r_forbid = newminhh_lookup_resolve("libz.so.1", "adler32_combine", nullptr, &bad_ent, nullptr);
+        assert(r_forbid == NM_ERR_ABI);
+
+        /* unknown symbol returns non-NM_OK */
+        int r_unknown = newminhh_lookup_resolve("libz.so.1", "nonexistent_sym", nullptr, &bad_ent, nullptr);
+        assert(r_unknown != NM_OK);
+
+        void *hz = compat_dlopen("libz.so.1", RTLD_NOW);
+        if (hz) {
+            void *fn_comp2 = compat_dlsym_cdecl(hz, "compress2");
+            void *fn_uncomp = compat_dlsym_cdecl(hz, "uncompress");
+            if (fn_comp2 && fn_uncomp) {
+                static const char src_data[] = "Newminhh Wave 2 Lookup Runtime Integration Test Data String!";
+                uint32_t src_len = (uint32_t)strlen(src_data) + 1;
+                static char comp_buf[256] = {0};
+                static unsigned long comp_len = sizeof(comp_buf);
+                comp_len = sizeof(comp_buf);
+                int rc = asm_test_invoke_cdecl_out_compress2(fn_comp2, comp_buf, &comp_len, src_data, src_len, 6);
+                assert(rc == 0);
+
+                static char uncomp_buf[256] = {0};
+                static unsigned long uncomp_len = sizeof(uncomp_buf);
+                uncomp_len = sizeof(uncomp_buf);
+                rc = asm_test_invoke_cdecl_out_uncompress(fn_uncomp, uncomp_buf, &uncomp_len, comp_buf, (uint32_t)comp_len);
+                assert(rc == 0);
+                assert(strcmp(uncomp_buf, src_data) == 0);
+            }
+
+            /* Verifying FORBIDDEN_ABI refusal via compat_dlsym */
+            compat_dlerror();
+            void *forbid_sym = compat_dlsym(hz, "adler32_combine");
+            assert(forbid_sym == nullptr);
+            const char *err = compat_dlerror();
+            assert(err != nullptr);
+
+            compat_dlclose(hz);
+        }
+    }
+
+    printf("PASS test_lookup_runtime\n");
+}
+
 int main(void) {
     test_outgoing_marshaling();
     test_incoming_bridge();
@@ -987,6 +1175,7 @@ int main(void) {
     test_struct_repacking();
     test_dl_and_wrappers();
     test_cstd_features();
+    test_lookup_runtime();
     printf("ALL_PART2_TESTS_PASSED\n");
     return 0;
 }
